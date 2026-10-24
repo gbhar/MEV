@@ -1,0 +1,399 @@
+{
+ "uid": "mev-v1",
+ "title": "MEV V1 paper trading",
+ "tags": [
+  "mev"
+ ],
+ "timezone": "utc",
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "10s",
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "stat",
+   "title": "Paper net profit (USD, cumulative realized)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 6,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "paper_profit_usd",
+     "legendFormat": "net"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 2,
+   "type": "stat",
+   "title": "Blocks / min",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 6,
+    "y": 0,
+    "w": 6,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "rate(blocks_processed_total[1m]) * 60",
+     "legendFormat": "blocks"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "RPC latency p50 / p95",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 0,
+    "w": 12,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "histogram_quantile(0.5, rate(rpc_latency_seconds_bucket[5m]))",
+     "legendFormat": "p50"
+    },
+    {
+     "refId": "B",
+     "expr": "histogram_quantile(0.95, rate(rpc_latency_seconds_bucket[5m]))",
+     "legendFormat": "p95"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 4,
+   "type": "bargauge",
+   "title": "Opportunity funnel (last hour)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 6,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "increase(opportunities_detected_total[1h])",
+     "legendFormat": "detected"
+    },
+    {
+     "refId": "B",
+     "expr": "increase(profitable_simulations_total[1h])",
+     "legendFormat": "profitable sims"
+    },
+    {
+     "refId": "C",
+     "expr": "increase(paper_trades_total[1h])",
+     "legendFormat": "paper trades"
+    },
+    {
+     "refId": "D",
+     "expr": "sum(increase(paper_trades_resolved_total{still_profitable=\"True\"}[1h]))",
+     "legendFormat": "still profitable at N+1"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 5,
+   "type": "timeseries",
+   "title": "Spread by pool pair (bps)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 6,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "spread_bps",
+     "legendFormat": "{{buy_pool}} -> {{sell_pool}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 6,
+   "type": "timeseries",
+   "title": "Pool prices (USDC per WETH)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 14,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "pool_price",
+     "legendFormat": "{{pool_id}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 7,
+   "type": "timeseries",
+   "title": "Risk blocks by rule (per 5m)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 14,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (rule) (increase(risk_blocks_total[5m]))",
+     "legendFormat": "{{rule}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 8,
+   "type": "timeseries",
+   "title": "Events decoded / min",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 22,
+    "w": 8,
+    "h": 7
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (event_type) (rate(events_fetched_total[5m]) * 60)",
+     "legendFormat": "{{event_type}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 9,
+   "type": "stat",
+   "title": "State divergence (events vs eth_call), last hour",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 22,
+    "w": 8,
+    "h": 7
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "sum by (pool_id) (increase(state_divergence_total[1h]))",
+     "legendFormat": "{{pool_id}}"
+    },
+    {
+     "refId": "B",
+     "expr": "increase(reorgs_total[1h])",
+     "legendFormat": "reorgs"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 10,
+   "type": "timeseries",
+   "title": "Scanner / simulation / feature latency p95",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 16,
+    "y": 22,
+    "w": 8,
+    "h": 7
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "histogram_quantile(0.95, rate(scanner_latency_seconds_bucket[5m]))",
+     "legendFormat": "scan"
+    },
+    {
+     "refId": "B",
+     "expr": "histogram_quantile(0.95, rate(simulation_latency_seconds_bucket[5m]))",
+     "legendFormat": "simulate"
+    },
+    {
+     "refId": "C",
+     "expr": "histogram_quantile(0.95, rate(feature_latency_seconds_bucket[5m]))",
+     "legendFormat": "features"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 11,
+   "type": "timeseries",
+   "title": "Errors (per 5m)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 29,
+    "w": 12,
+    "h": 7
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "increase(rpc_errors_total[5m])",
+     "legendFormat": "rpc errors"
+    },
+    {
+     "refId": "B",
+     "expr": "increase(log_fetch_errors_total[5m])",
+     "legendFormat": "log fetch errors"
+    },
+    {
+     "refId": "C",
+     "expr": "increase(blocks_skipped_total[5m])",
+     "legendFormat": "blocks skipped"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  },
+  {
+   "id": 12,
+   "type": "timeseries",
+   "title": "Paper resolve lag (blocks) p95",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 29,
+    "w": 12,
+    "h": 7
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "expr": "histogram_quantile(0.95, rate(paper_resolve_lag_blocks_bucket[1h]))",
+     "legendFormat": "lag p95"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {}
+  }
+ ],
+ "templating": {
+  "list": []
+ }
+}

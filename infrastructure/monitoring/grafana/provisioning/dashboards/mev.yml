@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: mev
+    folder: MEV
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

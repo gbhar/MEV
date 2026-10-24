@@ -1,0 +1,52 @@
+from eth_abi import encode
+from hexbytes import HexBytes
+
+from mev.chain.addresses import POOLS
+from mev.indexer.events import (TOPIC_AERO_SYNC, TOPIC_V2_SWAP, TOPIC_V3_SWAP, decode_log, end_of_block, reconcile, swap_rows)
+from mev.pools.state import PoolState
+
+BY_ADDR = {p.address.lower(): p for p in POOLS}
+V3 = next(p for p in POOLS if p.pool_id == "univ3_weth_usdc_5")
+AERO = next(p for p in POOLS if p.pool_id == "aero_weth_usdc_v")
+V2 = next(p for p in POOLS if p.pool_id == "univ2_weth_usdc")
+
+
+def mk(pool, topic, data, idx=0, block=100):
+    return {"address": pool.address, "topics": [HexBytes(topic)], "data": HexBytes(data),
+            "blockNumber": block, "transactionHash": HexBytes("0x" + "ab" * 32), "logIndex": idx}
+
+
+def test_decode_v3_swap():
+    data = encode(["int256", "int256", "uint160", "uint128", "int24"], [-10**18, 2_365_000_000, 3856509629693946940415200, 985235654424548596, -198617])
+    e = decode_log(mk(V3, TOPIC_V3_SWAP, data), BY_ADDR)
+    assert e.event_type == "swap" and e.amount0 == -10**18 and e.amount1 == 2_365_000_000
+    assert e.sqrt_price_x96 == 3856509629693946940415200 and e.tick == -198617
+    (row,) = swap_rows([e], POOLS)
+    assert row.volume_usd == 2365.0 and row.transaction_hash.startswith("0x")
+
+
+def test_decode_sync_and_v2_swap():
+    sync = decode_log(mk(AERO, TOPIC_AERO_SYNC, encode(["uint256", "uint256"], [800 * 10**18, 1_900_000 * 10**6])), BY_ADDR)
+    assert sync.event_type == "sync" and sync.reserve0 == 800 * 10**18
+    swap = decode_log(mk(V2, TOPIC_V2_SWAP, encode(["uint256"] * 4, [0, 1000 * 10**6, 4 * 10**17, 0])), BY_ADDR)
+    assert swap.event_type == "swap" and swap.amount0 == -4 * 10**17 and swap.amount1 == 1000 * 10**6
+
+
+def test_unknown_pool_or_topic_is_ignored():
+    assert decode_log(mk(V3, "0x" + "11" * 32, b""), BY_ADDR) is None
+    other = mk(V3, TOPIC_V3_SWAP, b""); other["address"] = "0x" + "00" * 20
+    assert decode_log(other, BY_ADDR) is None
+
+
+def test_reconcile_agrees_disagrees_and_rebuilds():
+    sync_data = encode(["uint256", "uint256"], [800 * 10**18, 1_900_000 * 10**6])
+    events = [decode_log(mk(AERO, TOPIC_AERO_SYNC, encode(["uint256", "uint256"], [1, 1]), idx=0), BY_ADDR),
+              decode_log(mk(AERO, TOPIC_AERO_SYNC, sync_data, idx=1), BY_ADDR),
+              decode_log(mk(V2, TOPIC_AERO_SYNC, sync_data, idx=2), BY_ADDR)]
+    assert end_of_block(events)[AERO.pool_id].reserve0 == 800 * 10**18   # last one wins
+    states = {AERO.pool_id: PoolState(AERO, 100, reserve0=800 * 10**18, reserve1=1_900_000 * 10**6)}
+    agreed = reconcile(states, events, POOLS, 100)
+    assert agreed == {AERO.pool_id: True}
+    assert V2.pool_id in states and states[V2.pool_id].reserve1 == 1_900_000 * 10**6   # rebuilt from Sync
+    states[AERO.pool_id].reserve0 += 1
+    assert reconcile(states, events, POOLS, 100)[AERO.pool_id] is False
