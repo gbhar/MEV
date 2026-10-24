@@ -95,6 +95,27 @@ which hold no V3 tick window, so a tick-crossing V3 leg is reported `exact=false
 state divergence, stage latencies, errors, resolve lag). The YAML/JSON are validated by `make test`
 tooling but the stack itself was not brought up on this machine (Docker was not running).
 
+## Running it on a free VM (Oracle Cloud Always Free)
+
+The loop, agent and API together need well under 1 GB of RAM, no GPU and no coins, so an always-free
+VM is enough. Oracle's Ampere A1 shape (up to 4 cores, 24 GB) is free indefinitely.
+
+1. Create the tenancy yourself at cloud.oracle.com (card needed for identity verification; the free
+   shapes are never charged). Compute → Instances → Create: image **Ubuntu 24.04**, shape
+   **VM.Standard.A1.Flex** (1 OCPU, 6 GB is plenty), add your SSH public key, create.
+2. Copy the repo to the VM and run the setup script:
+   ```bash
+   rsync -a --exclude .venv --exclude mev.db --exclude data ./ ubuntu@<vm-ip>:mev/
+   ssh ubuntu@<vm-ip> 'cd mev && bash deploy/setup.sh'
+   ```
+   (or `git clone` your remote on the VM instead of rsync).
+3. Set alerts: follow `deploy/telegram.md`, put the URL in `.env` on the VM, restart the agent.
+4. Watch: `docker compose -f docker-compose.app.yml logs -f loop agent`. The API stays bound to
+   localhost on the VM; reach it with `ssh -L 8000:127.0.0.1:8000 ubuntu@<vm-ip>` and open
+   http://localhost:8000/pnl. Nothing needs to be opened in the Oracle security list.
+
+The same `Dockerfile` and `docker-compose.app.yml` work on any Ubuntu VM (GCP e2-micro included).
+
 ## Known limitations (deliberate for V1)
 
 - **"Actual result" ignores the race.** Re-simulating on the next block says whether the spread

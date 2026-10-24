@@ -1,0 +1,31 @@
+# The application stack for a server: the hot loop, the agent and the read API, sharing one SQLite
+# file on ./data. Start with:  docker compose -f docker-compose.app.yml up -d --build
+# Secrets and alert settings come from .env (copy .env.example). Nothing here holds a private key.
+x-app: &app
+  build: .
+  image: mev-platform:latest
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    MEV_DATABASE_URL: sqlite:////data/mev.db
+    MEV_AGENT_MACOS_NOTIFY: "false"
+  volumes:
+    - ./data:/data
+  logging:
+    driver: json-file
+    options: { max-size: "50m", max-file: "5" }
+
+services:
+  loop:
+    <<: *app
+    command: python -m mev.main
+    ports: ["127.0.0.1:9100:9100"]     # Prometheus metrics, local only
+  agent:
+    <<: *app
+    command: python -m mev.agent
+    depends_on: [loop]
+  api:
+    <<: *app
+    command: python -m uvicorn mev.api.app:app --host 0.0.0.0 --port 8000
+    ports: ["127.0.0.1:8000:8000"]     # reach it through an SSH tunnel; see README
+    depends_on: [loop]
