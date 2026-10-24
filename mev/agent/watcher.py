@@ -26,6 +26,16 @@ from mev.scanner.scanner import Candidate
 log = logging.getLogger("mev.agent")
 
 
+def redact(url: str) -> str:
+    """postgresql+psycopg://user:password@host/db -> postgresql+psycopg://user:***@host/db"""
+    if "@" in url and "://" in url:
+        scheme, rest = url.split("://", 1)
+        creds, host = rest.rsplit("@", 1)
+        user = creds.split(":", 1)[0]
+        return f"{scheme}://{user}:***@{host}"
+    return url
+
+
 def record(opp_id: int, block: int, kind: str, status: str, payload: dict) -> None:
     with session() as db:
         db.add(Action(opportunity_id=opp_id, block_number=block, kind=kind, status=status, payload=json.dumps(payload, default=str)))
@@ -130,7 +140,7 @@ async def run(from_id: int | None, once: bool) -> None:
         opened = db.scalar(select(func.count(PaperTrade.id))) or 0
     agent = Agent(make_web3(), latest if from_id is None else from_id)
     log.info("agent watching %s from opportunity id %s (%d paper trades so far); alerts: macos=%s webhook=%s llm=%s",
-             settings.database_url, agent.last_id, opened, settings.agent_macos_notify, bool(settings.alert_webhook), llm.enabled(settings))
+             redact(settings.database_url), agent.last_id, opened, settings.agent_macos_notify, bool(settings.alert_webhook), llm.enabled(settings))
     while True:
         try:
             n = await agent.tick()

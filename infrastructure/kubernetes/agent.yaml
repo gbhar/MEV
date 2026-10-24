@@ -11,9 +11,12 @@ spec:
     metadata:
       labels: { app: mev-agent }
     spec:
+      enableServiceLinks: false     # Services named mev-* would inject MEV_*_PORT env vars that Settings would read
+      imagePullSecrets:
+        - name: ocir-secret          # kubectl create secret docker-registry ocir-secret --docker-server=bom.ocir.io ...
       containers:
         - name: agent
-          image: ghcr.io/gbhar/mev:latest
+          image: bom.ocir.io/bm9gugcjiuw7/ane:mev
           imagePullPolicy: Always
           command: ["python", "-m", "mev.agent"]
           envFrom:

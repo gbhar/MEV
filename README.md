@@ -121,8 +121,10 @@ The same `Dockerfile` and `docker-compose.app.yml` work on any Ubuntu VM (GCP e2
 Manifests for an existing cluster with the CloudNativePG operator and kube-prometheus-stack (the OKE
 cluster `prodaiq-oke-test` has both). Everything lives in the `mev-platform` namespace: a 1-instance
 Postgres cluster, and one Deployment each for the loop, the agent and the API, all pulling
-`ghcr.io/gbhar/mev:latest`, which `.github/workflows/image.yml` builds for arm64 and amd64 on every
-push to `main` after the tests pass (the GHCR package must be public, or add an imagePullSecret).
+`bom.ocir.io/bm9gugcjiuw7/ane:mev` through the `ocir-secret` pull secret (push with `docker build -t
+bom.ocir.io/bm9gugcjiuw7/ane:mev . && docker push bom.ocir.io/bm9gugcjiuw7/ane:mev`). The GitHub Actions
+workflow also publishes `ghcr.io/gbhar/mev` on every push to `main`; switch the image back to it if that
+package is made public.
 
 ```bash
 make k8s-apply     # namespace, Postgres, deployments, ServiceMonitor, dashboard ConfigMap

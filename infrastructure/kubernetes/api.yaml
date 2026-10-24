@@ -10,9 +10,12 @@ spec:
     metadata:
       labels: { app: mev-api }
     spec:
+      enableServiceLinks: false     # Services named mev-* would inject MEV_*_PORT env vars that Settings would read
+      imagePullSecrets:
+        - name: ocir-secret          # kubectl create secret docker-registry ocir-secret --docker-server=bom.ocir.io ...
       containers:
         - name: api
-          image: ghcr.io/gbhar/mev:latest
+          image: bom.ocir.io/bm9gugcjiuw7/ane:mev
           imagePullPolicy: Always
           command: ["python", "-m", "uvicorn", "mev.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
           envFrom:

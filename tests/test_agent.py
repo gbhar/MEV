@@ -84,3 +84,8 @@ def test_watcher_records_and_describes():
     with session() as db:
         a = db.scalar(select(Action).where(Action.opportunity_id == opp_id))
     assert a.kind == "verify" and json.loads(a.payload)["all_match"] is True
+
+
+def test_redact_hides_password():
+    assert watcher.redact("postgresql+psycopg://mev:s3cret@mev-postgres-rw:5432/mev") == "postgresql+psycopg://mev:***@mev-postgres-rw:5432/mev"
+    assert watcher.redact("sqlite:///mev.db") == "sqlite:///mev.db"
