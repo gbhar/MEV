@@ -30,6 +30,7 @@ class BlockContext:
     gas_usd: Decimal
     rpc_latency_ms: float
     wall_time: float = 0.0              # time.time() when the block was processed; 0 in replay
+    prices: dict[str, Decimal] | None = None   # token address -> USD
 
 
 def note_candidates(block_number: int, pairs: set[tuple[str, str]]) -> None:
@@ -41,16 +42,20 @@ def note_candidates(block_number: int, pairs: set[tuple[str, str]]) -> None:
         _pair_first_seen.setdefault(pair, block_number)
 
 
-def depth_usd(st: PoolState, adapters: dict[str, DexAdapter]) -> float:
+def depth_usd(st: PoolState, adapters: dict[str, DexAdapter], prices: dict[str, Decimal] | None = None) -> float:
     """USD value of the reserves the swap math sees: real reserves for x*y=k, virtual reserves at the
     current tick for V3 (what the within-tick formula uses; far above what a 1% move can absorb)."""
     p = st.pool
-    price = float(adapters[p.kind].marginal_price(st))
+    u0 = float((prices or {}).get(p.token0.key, 0)) if prices else None
+    u1 = float((prices or {}).get(p.token1.key, 0)) if prices else None
+    if u0 is None or u1 is None:   # no price table: express everything in token1 units (old behaviour)
+        u1 = 1.0
+        u0 = float(adapters[p.kind].marginal_price(st))
     if st.reserve0 is not None and st.reserve1 is not None:
-        return st.reserve0 / 10**p.token0.decimals * price + st.reserve1 / 10**p.token1.decimals
+        return st.reserve0 / 10**p.token0.decimals * u0 + st.reserve1 / 10**p.token1.decimals * u1
     assert st.liquidity is not None and st.sqrt_price_x96 is not None
-    virt1 = st.liquidity * st.sqrt_price_x96 / Q96 / 10**p.token1.decimals
-    virt0 = st.liquidity * Q96 / st.sqrt_price_x96 / 10**p.token0.decimals * price
+    virt1 = st.liquidity * st.sqrt_price_x96 / Q96 / 10**p.token1.decimals * u1
+    virt0 = st.liquidity * Q96 / st.sqrt_price_x96 / 10**p.token0.decimals * u0
     return virt0 + virt1
 
 
@@ -85,7 +90,7 @@ def compute(db: Session, opportunity_id: int, c: Candidate, sim: SimResult, stat
     success_rate = sum(1 for ok, _ in outcomes if ok) / count if count else None
     lags = [lag for _, lag in outcomes if lag is not None]
     lag = sum(lags) / len(lags) if lags else None
-    buy_depth, sell_depth = depth_usd(buy, adapters), depth_usd(sell, adapters)
+    buy_depth, sell_depth = depth_usd(buy, adapters, ctx.prices), depth_usd(sell, adapters, ctx.prices)
     first_seen = _pair_first_seen.get((c.buy_pool_id, c.sell_pool_id), n)
     ts = datetime.fromtimestamp(ctx.timestamp, tz=timezone.utc)
     return Feature(

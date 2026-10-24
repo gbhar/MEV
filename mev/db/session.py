@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from mev.chain.addresses import CHAIN_ID, POOLS
 from mev.config import settings
 from mev.db.models import Base, PoolRow
+from mev.pools.registry import Pool
 
 engine = create_engine(settings.database_url, future=True)
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
@@ -23,11 +24,34 @@ def init_db() -> None:
                 ix.create(conn, checkfirst=True)
     with session() as db:
         for p in POOLS:
-            db.merge(PoolRow(pool_id=p.pool_id, chain_id=CHAIN_ID, dex=p.dex, kind=p.kind, address=p.address,
-                             token0_address=p.token0.address, token0_symbol=p.token0.symbol, token0_decimals=p.token0.decimals,
-                             token1_address=p.token1.address, token1_symbol=p.token1.symbol, token1_decimals=p.token1.decimals,
-                             fee_ppm=p.fee_ppm, tick_spacing=p.tick_spacing))
+            row = db.get(PoolRow, p.pool_id)
+            if row is None:
+                row = PoolRow(pool_id=p.pool_id, active=True, source="bootstrap")
+                db.add(row)
+            row.chain_id, row.dex, row.kind, row.address, row.variant, row.pair = CHAIN_ID, p.dex, p.kind, p.address, p.variant, p.pair
+            row.token0_address, row.token0_symbol, row.token0_decimals = p.token0.address, p.token0.symbol, p.token0.decimals
+            row.token1_address, row.token1_symbol, row.token1_decimals = p.token1.address, p.token1.symbol, p.token1.decimals
+            row.fee_ppm, row.tick_spacing = p.fee_ppm, p.tick_spacing
+            if row.source is None:
+                row.source = "bootstrap"
+            if row.active is None:   # rows created before the column existed
+                row.active = True
         db.commit()
+
+
+def load_active_pools(min_tvl_usd: float | None = None) -> list[Pool]:
+    """The pool set the loop watches: active rows (bootstrap rows have no TVL yet and are always included;
+    discovered rows need tvl >= min_tvl_usd). Falls back to the bootstrap list if the table is empty."""
+    from mev.pools.registry import Token
+    with session() as db:
+        rows = db.query(PoolRow).filter(PoolRow.active.is_(True)).all()
+    pools = []
+    for r in rows:
+        if r.source == "discovery" and min_tvl_usd is not None and (r.tvl_usd or 0) < min_tvl_usd:
+            continue
+        pools.append(Pool(r.pool_id, r.dex, r.kind, r.address, Token(r.token0_address, r.token0_symbol, r.token0_decimals),
+                          Token(r.token1_address, r.token1_symbol, r.token1_decimals), r.fee_ppm, r.tick_spacing, r.variant or "uniswap"))
+    return pools or list(POOLS)
 
 
 def session() -> Session:

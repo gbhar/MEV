@@ -40,9 +40,9 @@ def test_tracker_closes_when_spread_disappears(monkeypatch):
         return {"cp_a": cp_state(A, a, block), "cp_b": cp_state(B, b, block)}
 
     monkeypatch.setattr(lifetime, "fetch_states", fake_fetch_states)
-    monkeypatch.setattr(lifetime, "BY_ID", {"cp_a": A, "cp_b": B})
+    monkeypatch.setattr(lifetime, "load_active_pools", lambda *a, **k: [A, B])
     monkeypatch.setattr(lifetime, "closing_swaps", lambda c, b: [{"tx": "0xdead", "pool_id": "cp_b"}])
-    c = Candidate("cp_a", "cp_b", Decimal(2400), Decimal(2500), Decimal(400), Decimal(60), 99)
+    c = Candidate("cp_a", "cp_b", Decimal(2400), Decimal(2500), Decimal(400), Decimal(60), 99, "WETH/USDC")
     t = Tracker(1, c, 5000, Decimal("0.05"), last_block=99)
     for b in (100, 101, 102):
         asyncio.run(t.step(None, b, ADAPTERS, S))
@@ -57,8 +57,8 @@ def test_tracker_is_censored_after_max_blocks(monkeypatch):
         return {"cp_a": cp_state(A, 2400, block), "cp_b": cp_state(B, 2500, block)}
 
     monkeypatch.setattr(lifetime, "fetch_states", fake_fetch_states)
-    monkeypatch.setattr(lifetime, "BY_ID", {"cp_a": A, "cp_b": B})
-    c = Candidate("cp_a", "cp_b", Decimal(2400), Decimal(2500), Decimal(400), Decimal(60), 0)
+    monkeypatch.setattr(lifetime, "load_active_pools", lambda *a, **k: [A, B])
+    c = Candidate("cp_a", "cp_b", Decimal(2400), Decimal(2500), Decimal(400), Decimal(60), 0, "WETH/USDC")
     t = Tracker(1, c, 5000, Decimal("0.05"), last_block=0)
     for b in range(1, 10):
         asyncio.run(t.step(None, b, ADAPTERS, S))
@@ -89,3 +89,13 @@ def test_watcher_records_and_describes():
 def test_redact_hides_password():
     assert watcher.redact("postgresql+psycopg://mev:s3cret@mev-postgres-rw:5432/mev") == "postgresql+psycopg://mev:***@mev-postgres-rw:5432/mev"
     assert watcher.redact("sqlite:///mev.db") == "sqlite:///mev.db"
+
+
+def test_rpc_throttle_detection():
+    from mev.chain.rpc import is_throttle
+    class Http(Exception):
+        status = 429
+    assert is_throttle(Http())
+    assert is_throttle(RuntimeError("{'code': -32001, 'message': \"You've reached the usage limit for your current plan\"}"))
+    assert not is_throttle(RuntimeError("execution reverted"))
+    assert not is_throttle(None)

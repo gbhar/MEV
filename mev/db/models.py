@@ -31,6 +31,12 @@ class PoolRow(Base):
     token1_decimals: Mapped[int] = mapped_column(Integer)
     fee_ppm: Mapped[int] = mapped_column(Integer)
     tick_spacing: Mapped[int | None] = mapped_column(Integer)
+    variant: Mapped[str | None] = mapped_column(String(16))            # uniswap | pancake | slipstream | v2 | aerodrome
+    pair: Mapped[str | None] = mapped_column(String(32))               # base/quote
+    tvl_usd: Mapped[float | None] = mapped_column(Float)               # real token balances, from discovery
+    active: Mapped[bool | None] = mapped_column(Boolean, default=True)  # watched by the loop
+    source: Mapped[str | None] = mapped_column(String(16))             # bootstrap | discovery
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
 
 
 class Block(Base):
@@ -75,6 +81,7 @@ class Opportunity(Base):
     block_number: Mapped[int] = mapped_column(ForeignKey("blocks.block_number"), index=True)
     head_block: Mapped[int | None] = mapped_column(Integer)            # chain head re-read just before the risk check
     strategy: Mapped[str] = mapped_column(String(32), default="cross_dex_arbitrage")
+    pair: Mapped[str | None] = mapped_column(String(32), index=True)
     buy_pool_id: Mapped[str] = mapped_column(ForeignKey("pools.pool_id"))
     sell_pool_id: Mapped[str] = mapped_column(ForeignKey("pools.pool_id"))
     buy_price: Mapped[float] = mapped_column(Float)
@@ -188,3 +195,18 @@ class Action(Base):
     status: Mapped[str] = mapped_column(String(16))        # ok | failed | skipped
     payload: Mapped[str] = mapped_column(Text, default="{}")   # JSON
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utcnow)
+
+
+class TokenRow(Base):
+    __tablename__ = "tokens"
+    address: Mapped[str] = mapped_column(String(42), primary_key=True)   # lowercase
+    chain_id: Mapped[int] = mapped_column(Integer)
+    symbol: Mapped[str] = mapped_column(String(16))
+    decimals: Mapped[int] = mapped_column(Integer)
+
+
+class Meta(Base):
+    """Small key/value store for resumable jobs (e.g. discovery scan progress)."""
+    __tablename__ = "meta"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)

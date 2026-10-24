@@ -201,7 +201,7 @@ def swap_exact_in(state: PoolState, zero_for_one: bool, amount_in: int) -> SwapR
     assert state.sqrt_price_x96 is not None and state.liquidity is not None and state.tick is not None
     sqrt_p, tick, liquidity = state.sqrt_price_x96, state.tick, state.liquidity
     spacing = state.pool.tick_spacing or 1
-    fee_ppm = state.pool.fee_ppm
+    fee_ppm = state.fee_ppm if state.fee_ppm is not None else state.pool.fee_ppm
     bitmap, nets = state.tick_bitmap or {}, state.tick_nets or {}
     limit = MIN_SQRT_RATIO + 1 if zero_for_one else MAX_SQRT_RATIO - 1
     remaining, amount_out, crossed = amount_in, 0, 0
@@ -256,17 +256,23 @@ class UniswapV3Adapter:
         return Quote(r.amount_out, exact=r.exact, note=note)
 
 
-async def quote_onchain_detail(w3: AsyncWeb3, quoter: str, token_in: str, token_out: str, amount_in: int, fee_ppm: int,
-                               block_number: int | None = None) -> tuple[int, int, int]:
-    """QuoterV2 via eth_call: (amount_out, sqrt_price_x96_after, initialized_ticks_crossed)."""
-    c = w3.eth.contract(address=AsyncWeb3.to_checksum_address(quoter), abi=abi.UNISWAP_V3_QUOTER_V2)
-    params = (AsyncWeb3.to_checksum_address(token_in), AsyncWeb3.to_checksum_address(token_out), amount_in, fee_ppm, 0)
+async def quote_onchain_detail(w3: AsyncWeb3, quoter: str, token_in: str, token_out: str, amount_in: int, tier: int,
+                               block_number: int | None = None, variant: str = "uniswap") -> tuple[int, int, int]:
+    """QuoterV2 via eth_call: (amount_out, sqrt_price_x96_after, initialized_ticks_crossed). `tier` is the fee in
+    ppm for Uniswap/PancakeSwap and the tick spacing for Aerodrome Slipstream."""
+    quoter_abi = abi.SLIPSTREAM_QUOTER_V2 if variant == "slipstream" else abi.UNISWAP_V3_QUOTER_V2
+    c = w3.eth.contract(address=AsyncWeb3.to_checksum_address(quoter), abi=quoter_abi)
+    params = (AsyncWeb3.to_checksum_address(token_in), AsyncWeb3.to_checksum_address(token_out), amount_in, tier, 0)
     out, sqrt_after, crossed, _ = await c.functions.quoteExactInputSingle(params).call(block_identifier=block_number)
     return out, sqrt_after, crossed
 
 
-async def quote_onchain(w3: AsyncWeb3, quoter: str, token_in: str, token_out: str, amount_in: int, fee_ppm: int,
-                        block_number: int | None = None) -> int:
+async def quote_onchain(w3: AsyncWeb3, quoter: str, token_in: str, token_out: str, amount_in: int, tier: int,
+                        block_number: int | None = None, variant: str = "uniswap") -> int:
     """Exact quote from QuoterV2 via eth_call. Slower than local math; the ground truth for tests."""
-    out, _, _ = await quote_onchain_detail(w3, quoter, token_in, token_out, amount_in, fee_ppm, block_number)
+    out, _, _ = await quote_onchain_detail(w3, quoter, token_in, token_out, amount_in, tier, block_number, variant)
     return out
+
+
+def quoter_tier(pool) -> int:
+    return pool.tick_spacing if pool.variant == "slipstream" else pool.fee_ppm

@@ -104,12 +104,24 @@ def end_of_block(events: list[PoolEvent]) -> dict[str, PoolEvent]:
     return last
 
 
+def liquidity_changed_after(events: list[PoolEvent], last: dict[str, PoolEvent]) -> set[str]:
+    """Pools where a Mint/Burn came after the last Swap in the block: in-range liquidity may legitimately differ
+    from the Swap event's value, so only price and tick are comparable."""
+    out = set()
+    for e in events:
+        if e.event_type in ("mint", "burn") and e.pool_id in last and e.log_index > last[e.pool_id].log_index:
+            out.add(e.pool_id)
+    return out
+
+
 def reconcile(states: dict[str, PoolState], events: list[PoolEvent], pools: list[Pool], block_number: int) -> dict[str, bool]:
     """Compare event-derived end-of-block state with the fetched state. Returns pool_id -> agreed.
     Fills in a missing constant-product state from its last Sync (the fetch failed for that pool)."""
     agreed: dict[str, bool] = {}
     by_id = {p.pool_id: p for p in pools}
-    for pool_id, e in end_of_block(events).items():
+    last = end_of_block(events)
+    liq_moved = liquidity_changed_after(events, last)
+    for pool_id, e in last.items():
         st = states.get(pool_id)
         if st is None:
             if e.event_type == "sync":
@@ -118,6 +130,8 @@ def reconcile(states: dict[str, PoolState], events: list[PoolEvent], pools: list
             continue
         if e.event_type == "sync":
             ok = (st.reserve0, st.reserve1) == (e.reserve0, e.reserve1)
+        elif pool_id in liq_moved:
+            ok = (st.sqrt_price_x96, st.tick) == (e.sqrt_price_x96, e.tick)
         else:
             ok = (st.sqrt_price_x96, st.liquidity, st.tick) == (e.sqrt_price_x96, e.liquidity, e.tick)
         agreed[pool_id] = ok

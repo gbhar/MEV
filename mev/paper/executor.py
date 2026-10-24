@@ -67,7 +67,7 @@ class PaperExecutor:
         self.cumulative_net = Decimal(str(total or 0))
         for t, o in rows:
             c = Candidate(o.buy_pool_id, o.sell_pool_id, Decimal(str(o.buy_price)), Decimal(str(o.sell_price)),
-                          Decimal(str(o.spread_bps)), Decimal(str(o.fee_floor_bps)), o.block_number)
+                          Decimal(str(o.spread_bps)), Decimal(str(o.fee_floor_bps)), o.block_number, o.pair or "")
             self.pending.append(Pending(t.id, c, t.trade_size_usd, Decimal(str(t.expected_net_usd))))
             self.active_pairs[(c.buy_pool_id, c.sell_pool_id)] = t.opened_block
         paper_profit_usd.set(float(self.cumulative_net))
@@ -117,14 +117,14 @@ class PaperExecutor:
         return max(Decimal(0), -Decimal(str(total or 0))), failed
 
     def resolve(self, block_number: int, block_ts: int, states: dict[str, PoolState],
-                gas_usd: Decimal) -> list[tuple[Pending, SimResult, Decimal]]:
+                gas_usd: Decimal, prices: dict[str, Decimal] | None = None) -> list[tuple[Pending, SimResult, Decimal]]:
         """gas_usd is what a transaction included in this block pays (this block's base fee + tip)."""
         resolved: list[tuple[Pending, SimResult, Decimal]] = []
         for p in list(self.pending):
             if p.candidate.buy_pool_id not in states or p.candidate.sell_pool_id not in states:
                 continue  # a pool fetch failed this block; try again on the next one
             try:
-                r = simulate_size(p.candidate, states, self.adapters, p.size_usd, gas_usd, self.s)
+                r = simulate_size(p.candidate, states, self.adapters, p.size_usd, gas_usd, self.s, prices)
                 realized = realized_net(r)
                 with session() as db:
                     row = db.get(PaperTrade, p.trade_id)

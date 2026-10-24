@@ -44,13 +44,13 @@ def record(opp_id: int, block: int, kind: str, status: str, payload: dict) -> No
 
 def candidate_of(o: Opportunity) -> Candidate:
     return Candidate(o.buy_pool_id, o.sell_pool_id, Decimal(str(o.buy_price)), Decimal(str(o.sell_price)),
-                     Decimal(str(o.spread_bps)), Decimal(str(o.fee_floor_bps)), o.block_number)
+                     Decimal(str(o.spread_bps)), Decimal(str(o.fee_floor_bps)), o.block_number, o.pair or "")
 
 
 def describe(o: Opportunity) -> str:
     size, net = (o.chosen_trade_size_usd, o.chosen_net_usd) if o.risk_passed else (o.best_trade_size_usd, o.best_net_usd)
     verdict = "PAPER TRADE" if o.risk_passed else f"blocked: {o.risk_violations[:80]}"
-    return f"{o.buy_pool_id} -> {o.sell_pool_id} spread {o.spread_bps:.1f} bps, ${size:,} nets ${net:.2f} at block {o.block_number} ({verdict})"
+    return f"{o.pair or ''} {o.buy_pool_id} -> {o.sell_pool_id} spread {o.spread_bps:.1f} bps, ${size:,} nets ${net:.2f} at block {o.block_number} ({verdict})"
 
 
 class Agent:

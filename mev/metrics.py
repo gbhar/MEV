@@ -22,3 +22,4 @@ paper_trades_resolved = Counter("paper_trades_resolved_total", "Paper trades res
 scanner_latency = Histogram("scanner_latency_seconds", "scan() wall time per block")
 simulation_latency = Histogram("simulation_latency_seconds", "simulate() wall time per candidate")
 feature_latency = Histogram("feature_latency_seconds", "feature vector computation per opportunity")
+pools_refetched = Histogram("pools_refetched_per_block", "Pools whose state was fetched (not carried forward) per block", buckets=(0, 1, 2, 5, 10, 20, 50, 100))

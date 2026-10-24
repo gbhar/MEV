@@ -9,6 +9,8 @@ UNISWAP_V3_POOL = [
      "outputs": [{"name": "sqrtPriceX96", "type": "uint160"}, {"name": "tick", "type": "int24"},
                  {"type": "uint16"}, {"type": "uint16"}, {"type": "uint16"}, {"type": "uint8"}, {"type": "bool"}]},
     {"name": "liquidity", "type": "function", "stateMutability": "view", "inputs": [], "outputs": [{"type": "uint128"}]},
+    {"name": "fee", "type": "function", "stateMutability": "view", "inputs": [], "outputs": [{"type": "uint24"}]},
+    {"name": "tickSpacing", "type": "function", "stateMutability": "view", "inputs": [], "outputs": [{"type": "int24"}]},
     {"name": "token0", "type": "function", "stateMutability": "view", "inputs": [], "outputs": [{"type": "address"}]},
     {"name": "token1", "type": "function", "stateMutability": "view", "inputs": [], "outputs": [{"type": "address"}]},
     {"name": "tickBitmap", "type": "function", "stateMutability": "view", "inputs": [{"name": "wordPosition", "type": "int16"}],
@@ -36,6 +38,17 @@ UNISWAP_V3_QUOTER_V2 = [
      "inputs": [{"name": "params", "type": "tuple", "components": [
          {"name": "tokenIn", "type": "address"}, {"name": "tokenOut", "type": "address"},
          {"name": "amountIn", "type": "uint256"}, {"name": "fee", "type": "uint24"},
+         {"name": "sqrtPriceLimitX96", "type": "uint160"}]}],
+     "outputs": [{"name": "amountOut", "type": "uint256"}, {"name": "sqrtPriceX96After", "type": "uint160"},
+                 {"name": "initializedTicksCrossed", "type": "uint32"}, {"name": "gasEstimate", "type": "uint256"}]},
+]
+
+# Aerodrome Slipstream QuoterV2: same shape, but the tier field is int24 tickSpacing (changes the selector).
+SLIPSTREAM_QUOTER_V2 = [
+    {"name": "quoteExactInputSingle", "type": "function", "stateMutability": "nonpayable",
+     "inputs": [{"name": "params", "type": "tuple", "components": [
+         {"name": "tokenIn", "type": "address"}, {"name": "tokenOut", "type": "address"},
+         {"name": "amountIn", "type": "uint256"}, {"name": "tickSpacing", "type": "int24"},
          {"name": "sqrtPriceLimitX96", "type": "uint160"}]}],
      "outputs": [{"name": "amountOut", "type": "uint256"}, {"name": "sqrtPriceX96After", "type": "uint160"},
                  {"name": "initializedTicksCrossed", "type": "uint32"}, {"name": "gasEstimate", "type": "uint256"}]},

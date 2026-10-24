@@ -32,6 +32,9 @@ monitoring:
 live-tests:
 	MEV_LIVE_TESTS=1 $(PY) -m pytest -q
 
+discover:          # refresh the pools table (allowlisted tokens x factories); add ARGS=--all for everything
+	$(PY) -m mev.pools.discovery $(ARGS)
+
 # Laptop agent: alerts, on-chain verification and lifetime tracking for stored opportunities
 agent:
 	$(PY) -m mev.agent

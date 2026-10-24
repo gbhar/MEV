@@ -9,3 +9,4 @@ resources:
   - api.yaml
   - grafana-dashboard.yaml
   - ingress.yaml
+  - discovery-cronjob.yaml

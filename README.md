@@ -35,13 +35,26 @@ RPC: the default is `https://base-rpc.publicnode.com`. `https://mainnet.base.org
 5 requests/s and refuses `eth_getLogs` under load; the loop needs 3 requests per block (header, logs,
 one Multicall3 for every pool's state). A free Alchemy/QuickNode key is better still (`MEV_RPC_HTTP`).
 
+## Pools and pairs
+
+47 bootstrap pools over 13 pairs (`mev/chain/addresses.py`) across Uniswap V3, PancakeSwap V3, SushiSwap V3,
+Aerodrome Slipstream, Aerodrome V2 and Uniswap V2, including the 1 bp WETH/USDC, cbBTC and stable pools.
+`make discover` (daily CronJob on the cluster) refreshes every pool's fee and TVL from real token balances
+and adds any pool of the allowlisted tokens above `MEV_MIN_POOL_TVL_USD` (default $200k); `GET /pools`
+lists them with `min_tvl` / `max_tvl` / `pair` / `dex` filters. `make discover ARGS=--all` also walks the
+Aerodrome factories and PoolCreated logs; it is RPC-heavy and meant to be run by hand.
+
+Each pair has a quote token (USDC, then USDbC, USDT, DAI, WETH, cbBTC by priority) that is borrowed and
+measured in; non-dollar quotes are priced in USD per block through the deepest reference pools.
+
 ## What happens on each block
 
 1. `mev/main.py` processes blocks in order (at most `max_catchup_blocks` behind head), retries a failed
    block, never processes a stored block twice, and flags a parent-hash mismatch (reorg) in `blocks`.
-2. `mev/pools/state.py` fetches every pool's state in one Multicall3 call: `slot0`/`liquidity` plus the
-   tick bitmap and `liquidityNet` of each initialized tick within ±300 ticks for V3, `getReserves` for
-   x*y=k pools. The previous block's bitmap is the hint, so a warm block is a single `eth_call`.
+2. `mev/pools/state.py` fetches pool state through chunked Multicall3 calls: `slot0`/`liquidity` (and the
+   live `fee` for Slipstream) plus the tick bitmap and `liquidityNet` of the initialized ticks nearest the
+   price for V3 kinds, `getReserves` for x*y=k pools. Only pools that emitted an event are refetched; tick
+   data is cached and rebuilt after a Mint/Burn or on a round-robin schedule. RPC endpoints rotate on 403/429.
 3. `mev/indexer/events.py` fetches the block's pool logs (V3 Swap/Mint/Burn, V2/Aerodrome Swap/Sync),
    stores them in `swaps`, and cross-checks the event-derived end-of-block state against the fetched
    state (`state_divergence_total`). A missing x*y=k state is rebuilt from its last Sync.

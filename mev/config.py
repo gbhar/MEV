@@ -7,6 +7,7 @@ class Settings(BaseSettings):
 
     # Chain access (read-only in V1; no signer anywhere)
     rpc_http: str = "https://base-rpc.publicnode.com"   # mainnet.base.org allows 5 req/s and 429s eth_getLogs under load
+    rpc_http_fallbacks: str = "https://base.drpc.org,https://1rpc.io/base,https://mainnet.base.org"   # rotated to on 403/429
     rpc_ws: str | None = None
     poll_interval_s: float = 0.5
     rpc_timeout_s: float = 5.0           # one stuck request must not cost tens of 2 s blocks
@@ -20,7 +21,14 @@ class Settings(BaseSettings):
     # would leave the window is marked inexact and the risk engine blocks it.
     v3_tick_window: int = 300
     v3_tick_margin: int = 50             # extra ticks fetched speculatively from the previous block's bitmap
-    v3_max_ticks: int = 400              # hard cap per pool per block; the ticks nearest the price are kept
+    v3_max_ticks: int = 64               # cap per pool per block: the initialized ticks nearest the price (a $50k
+                                         # trade crosses a handful; 1 bp pools have hundreds within the window)
+    v3_max_ticks_spacing1: int = 160     # cap for 1-tick-spacing (1 bp) pools: a $20k trade crosses ~30 of them
+    multicall_chunk: int = 500           # calls per Multicall3 eth_call; chunks run concurrently
+    tick_refresh_pools_per_block: int = 2   # round-robin tick-window refresh (all pools every ~25 blocks with 47 pools)
+    min_pool_tvl_usd: float = 200_000    # discovery marks pools below this inactive
+    snapshot_all_every_blocks: int = 300  # full pool_snapshots row set every ~10 min; otherwise only changed pools
+    pool_reload_blocks: int = 1800       # re-read the active pool set from the DB about hourly
 
     fetch_logs: bool = True              # decode pool events per block (swaps table, state cross-check)
     api_port: int = 8000

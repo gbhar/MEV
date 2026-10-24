@@ -50,3 +50,12 @@ def test_reconcile_agrees_disagrees_and_rebuilds():
     assert V2.pool_id in states and states[V2.pool_id].reserve1 == 1_900_000 * 10**6   # rebuilt from Sync
     states[AERO.pool_id].reserve0 += 1
     assert reconcile(states, events, POOLS, 100)[AERO.pool_id] is False
+
+
+def test_burn_after_swap_relaxes_liquidity_check():
+    from mev.indexer.events import TOPIC_V3_BURN
+    swap = decode_log(mk(V3, TOPIC_V3_SWAP, encode(["int256", "int256", "uint160", "uint128", "int24"], [-1, 1, 3856509629693946940415200, 1000, -198617]), idx=1), BY_ADDR)
+    burn = decode_log(mk(V3, TOPIC_V3_BURN, encode(["uint128", "uint256", "uint256"], [5, 1, 1]), idx=2), BY_ADDR)
+    states = {V3.pool_id: PoolState(V3, 100, sqrt_price_x96=3856509629693946940415200, tick=-198617, liquidity=990)}
+    assert reconcile(states, [swap, burn], POOLS, 100)[V3.pool_id] is True      # liquidity moved by the burn: ignored
+    assert reconcile(states, [swap], POOLS, 100)[V3.pool_id] is False            # no burn: liquidity must match

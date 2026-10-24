@@ -6,16 +6,16 @@ from decimal import Decimal
 from sqlalchemy import select
 from web3 import AsyncWeb3
 
-from mev.chain.addresses import POOLS
+from mev.db.session import load_active_pools
 from mev.config import Settings
 from mev.db.models import Swap
 from mev.db.session import session
 from mev.dex.base import DexAdapter
+from mev.pools.prices import usd_prices
 from mev.pools.state import fetch_states
 from mev.scanner.scanner import Candidate
 from mev.simulator.simulate import simulate_size
 
-BY_ID = {p.pool_id: p for p in POOLS}
 
 
 @dataclass
@@ -41,10 +41,10 @@ class Tracker:
         if self.done or block_number <= self.last_block:
             return
         c = self.candidate
-        states = await fetch_states(w3, [BY_ID[c.buy_pool_id], BY_ID[c.sell_pool_id]], block_number)
+        states = await fetch_states(w3, load_active_pools(), block_number)
         if c.buy_pool_id not in states or c.sell_pool_id not in states:
             return
-        net = simulate_size(c, states, adapters, self.size_usd, self.gas_usd, s).net_usd
+        net = simulate_size(c, states, adapters, self.size_usd, self.gas_usd, s, usd_prices(states, adapters)).net_usd
         self.last_block = block_number
         self.nets.append((block_number, float(net)))
         if net < s.min_net_profit_usd:

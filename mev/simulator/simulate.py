@@ -1,9 +1,9 @@
-"""Deterministic economics. Borrow token1 (USDC) via flash loan, buy token0 (WETH) on the cheap
-pool, sell it on the expensive pool, repay. Net profit is computed from the two swap outputs,
-which already include pool fees and price impact, so those are NOT subtracted again.
+"""Deterministic economics. Borrow the pair's quote token via flash loan, buy the base token on the cheap
+pool, sell it on the expensive pool, repay. Net profit is computed from the two swap outputs, which
+already include pool fees and price impact, so those are NOT subtracted again.
 
-dex_fee_usd and slippage_usd are diagnostics only (which layer eats the spread). They decompose
-what is already inside gross_usd and must never be subtracted from it.
+Sizes are in USD; the quote amount is size_usd / usd_price(quote). dex_fee_usd and slippage_usd are
+diagnostics only (which layer eats the spread): they decompose what is already inside gross_usd.
 
 Gas: a trade decided on block N can only be included in N+1, so gas is priced at the EIP-1559
 base fee of N+1 (derived from N's header) plus a constant priority fee from Settings."""
@@ -19,9 +19,9 @@ from mev.scanner.scanner import Candidate
 @dataclass(frozen=True)
 class SimResult:
     trade_size_usd: int
-    amount_in: int           # raw token1 units borrowed
-    token0_out: int          # raw WETH from the buy leg
-    amount_back: int         # raw token1 from the sell leg
+    amount_in: int           # raw quote-token units borrowed
+    token0_out: int          # raw base-token units from the buy leg (name kept for the stored schema)
+    amount_back: int         # raw quote-token units from the sell leg
     gross_usd: Decimal
     flash_fee_usd: Decimal
     gas_usd: Decimal
@@ -30,6 +30,7 @@ class SimResult:
     exact: bool
     dex_fee_usd: Decimal = Decimal(0)    # informational: pool fees on both legs, already inside gross_usd
     slippage_usd: Decimal = Decimal(0)   # informational: price impact vs. marginal prices, already inside gross_usd
+    quote_symbol: str = ""
 
 
 def fee_params(extra_data: bytes, s: Settings) -> tuple[int, int, int]:
@@ -64,14 +65,15 @@ def gas_cost_usd(gas_price_wei: int, eth_price_usd: Decimal, s: Settings) -> Dec
 
 
 def simulate_size(c: Candidate, states: dict[str, PoolState], adapters: dict[str, DexAdapter],
-                  size_usd: int, gas_usd: Decimal, s: Settings) -> SimResult:
+                  size_usd: int, gas_usd: Decimal, s: Settings, prices: dict[str, Decimal] | None = None) -> SimResult:
     buy, sell = states[c.buy_pool_id], states[c.sell_pool_id]
-    t0, t1 = buy.pool.token0, buy.pool.token1
-    amount_in = size_usd * 10**t1.decimals
-    q1 = adapters[buy.pool.kind].quote_exact_in(buy, t1.address, amount_in)
-    q2 = adapters[sell.pool.kind].quote_exact_in(sell, t0.address, q1.amount_out)
-    scale = Decimal(10**t1.decimals)
-    gross = (Decimal(q2.amount_out) - Decimal(amount_in)) / scale
+    quote, base = buy.pool.quote, buy.pool.base
+    quote_usd = (prices or {}).get(quote.key, Decimal(1))
+    scale = Decimal(10**quote.decimals)
+    amount_in = int(Decimal(size_usd) / quote_usd * scale)
+    q1 = adapters[buy.pool.kind].quote_exact_in(buy, quote.address, amount_in)
+    q2 = adapters[sell.pool.kind].quote_exact_in(sell, base.address, q1.amount_out)
+    gross = (Decimal(q2.amount_out) - Decimal(amount_in)) / scale * quote_usd
     flash = Decimal(size_usd) * s.flash_loan_fee_bps / 10_000
     buffer = Decimal(size_usd) * s.safety_buffer_bps / 10_000
     net = gross - flash - gas_usd - buffer
@@ -79,18 +81,17 @@ def simulate_size(c: Candidate, states: dict[str, PoolState], adapters: dict[str
     # size * (sell/buy - 1) == dex_fee + slippage + gross, with fees measured on the sell-side value.
     size = Decimal(size_usd)
     buy_fee, sell_fee = Decimal(buy.pool.fee_ppm) / 1_000_000, Decimal(sell.pool.fee_ppm) / 1_000_000
-    buy_p, sell_p = adapters[buy.pool.kind].marginal_price(buy), adapters[sell.pool.kind].marginal_price(sell)
-    ratio = sell_p / buy_p if buy_p > 0 else Decimal(0)
+    ratio = c.sell_price / c.buy_price if c.buy_price > 0 else Decimal(0)
     dex_fee = size * ratio * (1 - (1 - buy_fee) * (1 - sell_fee))
     slippage = size * (1 - buy_fee) * (1 - sell_fee) * ratio - size - gross
     return SimResult(size_usd, amount_in, q1.amount_out, q2.amount_out, gross, flash, gas_usd, buffer, net,
-                     q1.exact and q2.exact, dex_fee, slippage)
+                     q1.exact and q2.exact, dex_fee, slippage, quote.symbol)
 
 
 def simulate(c: Candidate, states: dict[str, PoolState], adapters: dict[str, DexAdapter],
-             gas_usd: Decimal, s: Settings) -> list[SimResult]:
+             gas_usd: Decimal, s: Settings, prices: dict[str, Decimal] | None = None) -> list[SimResult]:
     """Grid search over trade sizes. The caller picks the best size that passes the risk rules."""
-    return [simulate_size(c, states, adapters, size, gas_usd, s) for size in s.trade_sizes_usd]
+    return [simulate_size(c, states, adapters, size, gas_usd, s, prices) for size in s.trade_sizes_usd]
 
 
 def best(results: list[SimResult]) -> SimResult:
