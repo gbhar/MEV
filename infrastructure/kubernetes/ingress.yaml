@@ -1,0 +1,26 @@
+# Public URL through the cluster's Traefik, same convention as the other namespaces (nip.io host, HTTP).
+# Protected by basic auth; the users secret is created out of band:
+#   kubectl -n mev-platform create secret generic mev-api-basicauth --from-literal=users="mev:$(openssl passwd -apr1 <password>)"
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: mev-api-auth
+spec:
+  basicAuth:
+    secret: mev-api-basicauth
+    realm: mev
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: mev-api
+spec:
+  entryPoints: [web]
+  routes:
+    - match: Host(`mev.141.148.211.129.nip.io`)
+      kind: Rule
+      middlewares:
+        - name: mev-api-auth
+      services:
+        - name: mev-api
+          port: 8000

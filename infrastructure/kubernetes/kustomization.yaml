@@ -8,3 +8,4 @@ resources:
   - agent.yaml
   - api.yaml
   - grafana-dashboard.yaml
+  - ingress.yaml

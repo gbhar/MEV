@@ -134,6 +134,9 @@ make k8s-logs
 make k8s-api       # port-forward, then http://localhost:8000/pnl
 ```
 
+The API is also published through the cluster's Traefik at http://mev.141.148.211.129.nip.io behind basic
+auth (`infrastructure/kubernetes/ingress.yaml`; the users secret `mev-api-basicauth` is created by hand).
+
 The loop's metrics are scraped by the cluster Prometheus through the ServiceMonitor; the dashboard
 JSON is shipped as a sidecar ConfigMap and can also be imported by hand. No execution engine and no
 wallet secret exist in the namespace, as spec section 28 requires.
