@@ -31,3 +31,7 @@ monitoring:
 
 live-tests:
 	MEV_LIVE_TESTS=1 $(PY) -m pytest -q
+
+# Laptop agent: alerts, on-chain verification and lifetime tracking for stored opportunities
+agent:
+	$(PY) -m mev.agent

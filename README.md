@@ -63,11 +63,28 @@ one Multicall3 for every pool's state). A free Alchemy/QuickNode key is better s
 9. Everything lands in SQLite (`pools`, `blocks`, `pool_snapshots`, `swaps`, `opportunities`,
    `simulations`, `features`, `paper_trades`), every row pinned to a block.
 
+## Agent (`mev/agent`)
+
+`make agent` runs a second process on the laptop that watches the database and acts when the loop
+finds something: a risk-passed opportunity, or a blocked candidate whose best net clears
+`MEV_AGENT_ALERT_MIN_NET_USD`. For each one it
+
+1. sends a macOS notification and, if `MEV_ALERT_WEBHOOK` is set, posts to Slack, Discord or Telegram;
+2. re-quotes the Uniswap V3 legs on the on-chain QuoterV2 at that block and re-simulates with fresh
+   state, so the local math is checked against the chain (`actions.kind = verify`);
+3. follows the opportunity block by block until the spread no longer clears the minimum profit, and
+   records how many blocks it survived and the swaps in the block that closed it
+   (`actions.kind = lifetime`). That is the competition label the spec's MEV model needs;
+4. writes every step to the `actions` table (`GET /actions`, and inside `GET /opportunities/{id}`).
+
+It never signs or sends anything. Live execution (spec Phase 7) needs the flash-loan contract, a
+deployment, ETH for gas and a signer, none of which exist here.
+
 ## API (`mev/api/app.py`)
 
 `GET /health`, `GET /opportunities` (filters: dex, pair, min_profit, risk_passed, from_block, to_block),
 `GET /opportunities/{id}` (candidate, market state, simulations, features, risk decision, paper trade),
-`GET /pnl` (gross, fees, gas, net, win rate, max drawdown, execution loss), `POST /simulate`
+`GET /pnl` (gross, fees, gas, net, win rate, max drawdown, execution loss), `GET /actions`, `POST /simulate`
 (`pool_buy`, `pool_sell`, `trade_size_usd`, optional `block_number`; runs against stored snapshots,
 which hold no V3 tick window, so a tick-crossing V3 leg is reported `exact=false`).
 

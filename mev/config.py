@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     base_fee_change_denominator: int = 100
     min_base_fee_wei: int = 5_000_000    # Base floors the base fee at 0.005 gwei
 
+    # Laptop agent (mev/agent): reacts to stored opportunities; never trades
+    agent_poll_s: float = 1.0
+    agent_alert_min_net_usd: float = 5.0     # also alert on blocked candidates whose best net clears this
+    agent_max_track_blocks: int = 30         # how long to follow an opportunity before giving up
+    agent_macos_notify: bool = True
+    alert_webhook: str | None = None         # Slack/Discord/Telegram URL; see mev/agent/notify.py
+    llm_api_key: str | None = None           # enables the optional assessment step (mev/agent/llm.py)
+    llm_base_url: str = "https://integrate.api.nvidia.com/v1"   # any OpenAI-compatible endpoint
+    llm_model: str = "nvidia/llama-3.1-nemotron-70b-instruct"
+
     # Deterministic risk rules (paper mode still enforces them so the dataset is realistic)
     min_net_profit_usd: float = 1.0      # the doc's $25 is a mainnet number; Base margins are smaller
     max_trade_size_usd: int = 25_000

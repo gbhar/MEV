@@ -8,7 +8,9 @@ from sqlalchemy import func, select
 
 from mev.chain.addresses import POOLS
 from mev.config import settings
-from mev.db.models import Feature, Opportunity, PaperTrade, PoolSnapshot, Simulation
+import json
+
+from mev.db.models import Action, Feature, Opportunity, PaperTrade, PoolSnapshot, Simulation
 from mev.db.session import session
 from mev.dex.base import get_adapter
 from mev.pools.state import PoolState
@@ -65,12 +67,35 @@ def opportunity(opportunity_id: int) -> dict:
         sims = db.scalars(select(Simulation).where(Simulation.opportunity_id == o.id).order_by(Simulation.trade_size_usd)).all()
         feat = db.scalar(select(Feature).where(Feature.opportunity_id == o.id))
         trade = db.scalar(select(PaperTrade).where(PaperTrade.opportunity_id == o.id))
+        actions = db.scalars(select(Action).where(Action.opportunity_id == o.id).order_by(Action.id)).all()
         snaps = db.scalars(select(PoolSnapshot).where(PoolSnapshot.block_number == o.block_number,
                                                       PoolSnapshot.pool_id.in_([o.buy_pool_id, o.sell_pool_id]))).all()
     return {"candidate": row(o), "market_state": [row(s) for s in snaps], "simulations": [row(s) for s in sims],
             "features": row(feat) if feat else None, "ai_predictions": None,   # models run in shadow mode later
             "risk_decision": {"passed": o.risk_passed, "violations": o.risk_violations},
-            "paper_trade": row(trade) if trade else None}
+            "paper_trade": row(trade) if trade else None,
+            "actions": [action_row(a) for a in actions]}
+
+
+def action_row(a: Action) -> dict:
+    d = row(a)
+    try:
+        d["payload"] = json.loads(a.payload)
+    except ValueError:
+        pass
+    return d
+
+
+@app.get("/actions")
+def actions(kind: str | None = None, opportunity_id: int | None = None, limit: int = Query(100, le=1000)) -> list[dict]:
+    """What the laptop agent did: alert | webhook | verify | lifetime | llm."""
+    q = select(Action).order_by(Action.id.desc()).limit(limit)
+    if kind:
+        q = q.where(Action.kind == kind)
+    if opportunity_id is not None:
+        q = q.where(Action.opportunity_id == opportunity_id)
+    with session() as db:
+        return [action_row(a) for a in db.scalars(q)]
 
 
 @app.get("/pnl")

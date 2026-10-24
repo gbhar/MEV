@@ -175,3 +175,16 @@ class Feature(Base):
     token_pair_id: Mapped[str] = mapped_column(String(32))
     hour_of_day: Mapped[int] = mapped_column(Integer)
     day_of_week: Mapped[int] = mapped_column(Integer)
+
+
+class Action(Base):
+    """What the laptop agent (mev/agent) did about an opportunity: alert, webhook, on-chain verification,
+    lifetime tracking. Advisory records only; nothing here can trade."""
+    __tablename__ = "actions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    opportunity_id: Mapped[int] = mapped_column(ForeignKey("opportunities.id"), index=True)
+    block_number: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(16))          # alert | webhook | verify | lifetime
+    status: Mapped[str] = mapped_column(String(16))        # ok | failed | skipped
+    payload: Mapped[str] = mapped_column(Text, default="{}")   # JSON
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utcnow)
