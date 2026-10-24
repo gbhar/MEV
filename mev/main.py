@@ -175,7 +175,7 @@ async def process_block(w3, block_number: int, adapters, paper: PaperExecutor, *
                      parent_mismatch=parent_mismatch))
         # snapshots: pools whose state changed this block, plus everything every snapshot_all_every_blocks
         global _last_full_snapshot
-        full_snap = block_number - _last_full_snapshot >= settings.snapshot_all_every_blocks
+        full_snap = block_number - _last_full_snapshot >= settings.snapshot_all_every_blocks or not _fetched_now
         snap_states = states if full_snap else {k: v for k, v in states.items() if k in _fetched_now}
         if full_snap:
             _last_full_snapshot = block_number
