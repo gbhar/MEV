@@ -1,0 +1,21 @@
+# CloudNativePG cluster (the operator is installed in cnpg-system). Creates secret mev-postgres-app
+# with username/password/dbname and services mev-postgres-rw / -ro.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: mev-postgres
+spec:
+  instances: 1
+  storage:
+    size: 10Gi
+    storageClass: oci-bv
+  bootstrap:
+    initdb:
+      database: mev
+      owner: mev
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+  postgresql:
+    parameters:
+      max_connections: "50"

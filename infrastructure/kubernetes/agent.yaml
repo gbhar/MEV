@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mev-agent
+  labels: { app: mev-agent }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: mev-agent } }
+  template:
+    metadata:
+      labels: { app: mev-agent }
+    spec:
+      containers:
+        - name: agent
+          image: ghcr.io/gbhar/mev:latest
+          imagePullPolicy: Always
+          command: ["python", "-m", "mev.agent"]
+          envFrom:
+            - secretRef: { name: mev-env, optional: true }
+          env:
+            - { name: PGUSER, valueFrom: { secretKeyRef: { name: mev-postgres-app, key: username } } }
+            - { name: PGPASSWORD, valueFrom: { secretKeyRef: { name: mev-postgres-app, key: password } } }
+            - { name: MEV_DATABASE_URL, value: "postgresql+psycopg://$(PGUSER):$(PGPASSWORD)@mev-postgres-rw:5432/mev" }
+            - { name: MEV_AGENT_MACOS_NOTIFY, value: "false" }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 384Mi }

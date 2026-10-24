@@ -1,0 +1,9 @@
+# Spec section 28: the production namespace must have execution-engine = DISABLED and live-wallet-secret = ABSENT.
+# Nothing in this directory creates either.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mev-platform
+  labels:
+    app.kubernetes.io/part-of: mev-platform
+    mev.execution: disabled

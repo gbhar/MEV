@@ -116,6 +116,26 @@ VM is enough. Oracle's Ampere A1 shape (up to 4 cores, 24 GB) is free indefinite
 
 The same `Dockerfile` and `docker-compose.app.yml` work on any Ubuntu VM (GCP e2-micro included).
 
+## Running it on Kubernetes (`infrastructure/kubernetes`)
+
+Manifests for an existing cluster with the CloudNativePG operator and kube-prometheus-stack (the OKE
+cluster `prodaiq-oke-test` has both). Everything lives in the `mev-platform` namespace: a 1-instance
+Postgres cluster, and one Deployment each for the loop, the agent and the API, all pulling
+`ghcr.io/gbhar/mev:latest`, which `.github/workflows/image.yml` builds for arm64 and amd64 on every
+push to `main` after the tests pass (the GHCR package must be public, or add an imagePullSecret).
+
+```bash
+make k8s-apply     # namespace, Postgres, deployments, ServiceMonitor, dashboard ConfigMap
+make k8s-secret    # optional: MEV_ALERT_WEBHOOK / MEV_LLM_API_KEY / MEV_RPC_HTTP from .env
+make k8s-status
+make k8s-logs
+make k8s-api       # port-forward, then http://localhost:8000/pnl
+```
+
+The loop's metrics are scraped by the cluster Prometheus through the ServiceMonitor; the dashboard
+JSON is shipped as a sidecar ConfigMap and can also be imported by hand. No execution engine and no
+wallet secret exist in the namespace, as spec section 28 requires.
+
 ## Known limitations (deliberate for V1)
 
 - **"Actual result" ignores the race.** Re-simulating on the next block says whether the spread

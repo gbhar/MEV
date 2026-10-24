@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mev-loop
+  labels: { app: mev-loop }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }        # never two loops writing the same book
+  selector: { matchLabels: { app: mev-loop } }
+  template:
+    metadata:
+      labels: { app: mev-loop }
+    spec:
+      containers:
+        - name: loop
+          image: ghcr.io/gbhar/mev:latest
+          imagePullPolicy: Always
+          command: ["python", "-m", "mev.main"]
+          envFrom:
+            - secretRef: { name: mev-env, optional: true }     # make k8s-secret (webhook, LLM key, RPC override)
+          env:
+            - { name: PGUSER, valueFrom: { secretKeyRef: { name: mev-postgres-app, key: username } } }
+            - { name: PGPASSWORD, valueFrom: { secretKeyRef: { name: mev-postgres-app, key: password } } }
+            - { name: MEV_DATABASE_URL, value: "postgresql+psycopg://$(PGUSER):$(PGPASSWORD)@mev-postgres-rw:5432/mev" }
+            - { name: MEV_METRICS_PORT, value: "9100" }
+          ports:
+            - { name: metrics, containerPort: 9100 }
+          livenessProbe:
+            httpGet: { path: /metrics, port: metrics }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mev-loop-metrics
+  labels: { app: mev-loop }
+spec:
+  selector: { app: mev-loop }
+  ports:
+    - { name: metrics, port: 9100, targetPort: metrics }
+---
+# Picked up by the kube-prometheus-stack Prometheus in `monitoring` (its selectors are empty = all namespaces).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: mev-loop
+  labels: { app: mev-loop }
+spec:
+  selector: { matchLabels: { app: mev-loop } }
+  endpoints:
+    - { port: metrics, interval: 15s }
