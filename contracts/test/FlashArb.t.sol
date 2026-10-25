@@ -30,6 +30,9 @@ contract FlashArbTest is Test {
     address constant WETH = 0x4200000000000000000000000000000000000006;
     address constant VIRTUAL = 0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b;
     address constant AERO_VIRTUAL_WETH = 0x21594b992F68495dD28d605834b58889d0a727c7; // Aerodrome volatile, 100 bp fee
+    address constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913;
+    address constant UNIV3_WETH_USDC_5 = 0xd0b53D9277642d899DF5C87A3966A349A798F224; // Uniswap V3 WETH/USDC 5 bp
+    address constant AERO_WETH_USDC = 0xcDAC0d6c6C59727a65F871236188350531885C43; // Aerodrome volatile WETH/USDC 30 bp
     address constant UNIV3_VIRTUAL_WETH_5 = 0x9c087Eb773291e50CF6c6a90ef0F4500e349B903; // Uniswap V3, 5 bp
 
     // Paper trade 4 (block 53038943, $1,000 of WETH). The platform booked it as +$1.68 with the Aerodrome fee
@@ -194,5 +197,104 @@ contract FlashArbTest is Test {
         arb.setOwner(stranger);
         vm.expectRevert(FlashArb.NotOwner.selector);
         arb.setPaused(true);
+    }
+
+    // ---------------------------------------------------------------- routes (triangular and longer)
+
+    function _triangle(FlashArb.Lender lender, uint256 amount, uint256 minProfit)
+        internal
+        returns (FlashArb.RouteParams memory p)
+    {
+        // WETH -> VIRTUAL (pair A, VIRTUAL cheap) -> USDC (pair B) -> WETH (pair C), all mocks, 1% edge on A
+        MockPair a = new MockPair(WETH, VIRTUAL, 30);
+        MockPair b = new MockPair(VIRTUAL, USDC, 30);
+        MockPair c = new MockPair(USDC, WETH, 30);
+        deal(WETH, address(a), 100 ether);
+        deal(VIRTUAL, address(a), 100 ether * 2500 * 102 / 100); // 2550 VIRTUAL per WETH
+        deal(VIRTUAL, address(b), 2_500_000 ether);
+        deal(USDC, address(b), 2_500_000 * 1e6); // 1 USDC per VIRTUAL
+        deal(USDC, address(c), 2_500_000 * 1e6);
+        deal(WETH, address(c), 1000 ether); // 2500 USDC per WETH
+        p.lender = lender;
+        p.quote = WETH;
+        p.amount = amount;
+        p.legs = new FlashArb.Leg[](3);
+        p.legs[0] = FlashArb.Leg(address(a), FlashArb.Kind.PAIR_V2, WETH, VIRTUAL, 3000);
+        p.legs[1] = FlashArb.Leg(address(b), FlashArb.Kind.PAIR_AERODROME, VIRTUAL, USDC, 0);
+        p.legs[2] = FlashArb.Leg(address(c), FlashArb.Kind.PAIR_V2, USDC, WETH, 3000);
+        p.minProfit = minProfit;
+        p.deadlineBlock = block.number;
+    }
+
+    function test_route_three_legs_profit_swept_to_owner() public {
+        if (!_fork(T4_BLOCK)) return;
+        FlashArb.RouteParams memory p = _triangle(FlashArb.Lender.MORPHO_BLUE, 0.1 ether, 0.0003 ether);
+        uint256 before = IERC20(WETH).balanceOf(owner);
+        uint256 profit = arb.executeRoute(p);
+        assertGt(profit, 0.0003 ether);
+        assertEq(IERC20(WETH).balanceOf(owner) - before, profit);
+        assertEq(IERC20(WETH).balanceOf(address(arb)), 0);
+        assertEq(IERC20(VIRTUAL).balanceOf(address(arb)), 0);
+        assertEq(IERC20(USDC).balanceOf(address(arb)), 0);
+    }
+
+    function test_route_on_real_pools_reverts_instead_of_losing() public {
+        if (!_fork(T4_BLOCK)) return;
+        // WETH -> VIRTUAL (Aerodrome, 100 bp) -> WETH (Uniswap V3 5 bp) -> USDC (Uniswap V3 5 bp) -> WETH (Aerodrome 30 bp): a real
+        // 4-leg route that cannot be profitable; the contract must revert and leave nothing behind.
+        FlashArb.RouteParams memory p;
+        p.lender = FlashArb.Lender.AAVE_V3;
+        p.quote = WETH;
+        p.amount = 0.1 ether;
+        p.legs = new FlashArb.Leg[](4);
+        p.legs[0] = FlashArb.Leg(AERO_VIRTUAL_WETH, FlashArb.Kind.PAIR_AERODROME, WETH, VIRTUAL, 0);
+        p.legs[1] = FlashArb.Leg(UNIV3_VIRTUAL_WETH_5, FlashArb.Kind.CL_UNISWAP, VIRTUAL, WETH, 0);
+        p.legs[2] = FlashArb.Leg(UNIV3_WETH_USDC_5, FlashArb.Kind.CL_UNISWAP, WETH, USDC, 0);
+        p.legs[3] = FlashArb.Leg(AERO_WETH_USDC, FlashArb.Kind.PAIR_AERODROME, USDC, WETH, 0);
+        p.minProfit = 1;
+        p.deadlineBlock = block.number;
+        vm.expectRevert();
+        arb.executeRoute(p);
+        assertEq(IERC20(WETH).balanceOf(address(arb)), 0);
+        assertEq(IERC20(USDC).balanceOf(address(arb)), 0);
+    }
+
+    function test_route_validation() public {
+        if (!_fork(T4_BLOCK)) return;
+        FlashArb.RouteParams memory p = _triangle(FlashArb.Lender.AAVE_V3, 0.1 ether, 0);
+        p.legs[1].tokenIn = USDC; // breaks the chain
+        vm.expectRevert(FlashArb.BadRoute.selector);
+        arb.executeRoute(p);
+        p = _triangle(FlashArb.Lender.AAVE_V3, 0.1 ether, 0);
+        p.legs[2].tokenOut = USDC; // does not return to quote
+        vm.expectRevert(FlashArb.BadRoute.selector);
+        arb.executeRoute(p);
+        p = _triangle(FlashArb.Lender.AAVE_V3, 0.1 ether, 0);
+        p.legs = new FlashArb.Leg[](1);
+        p.legs[0] = FlashArb.Leg(address(1), FlashArb.Kind.PAIR_V2, WETH, WETH, 0);
+        vm.expectRevert(FlashArb.BadRoute.selector);
+        arb.executeRoute(p);
+        p = _triangle(FlashArb.Lender.AAVE_V3, 0.1 ether, 0);
+        vm.prank(stranger);
+        vm.expectRevert(FlashArb.NotOwner.selector);
+        arb.executeRoute(p);
+    }
+
+    function test_two_leg_execute_still_matches_route_path() public {
+        if (!_fork(T4_BLOCK)) return;
+        (FlashArb.Params memory p2,,) = _mockRoute(FlashArb.Lender.AAVE_V3, 0.1 ether, 0);
+        uint256 viaExecute = arb.execute(p2);
+        (FlashArb.Params memory p2b, MockPair a, MockPair b) = _mockRoute(FlashArb.Lender.AAVE_V3, 0.1 ether, 0);
+        FlashArb.RouteParams memory r;
+        r.lender = p2b.lender;
+        r.quote = p2b.quote;
+        r.amount = p2b.amount;
+        r.legs = new FlashArb.Leg[](2);
+        r.legs[0] = p2b.buy;
+        r.legs[1] = p2b.sell;
+        r.deadlineBlock = p2b.deadlineBlock;
+        assertEq(arb.executeRoute(r), viaExecute, "execute() is the two-leg route");
+        a;
+        b;
     }
 }

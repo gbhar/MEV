@@ -93,10 +93,19 @@ finds something: a risk-passed opportunity, or a blocked candidate whose best ne
 
 It never signs or sends anything; execution lives in the loop process (next section).
 
+## Triangular routes (`scan_routes`)
+
+Besides the two-leg scan, every block runs `mev/scanner/scanner.py: scan_routes`: for each quote token in
+`MEV_ROUTE_QUOTES` (USDC, WETH) and every ordered pair of other watched tokens it takes the best venue per hop
+(highest marginal rate after the pool fee) and emits a candidate `Q>A>B>Q` when the gross round-trip multiple clears
+the sum of the three fees. The simulator chains the legs with the same exact AMM math; the contract runs them with
+`executeRoute()`; `opportunities.route`/`path` hold the pool ids and token path, `strategy = triangular`. Routes are
+borrowed from the same flash lender and obey the same risk rules; a route's pools count as busy for other candidates.
+
 ## Execution (`contracts/`, `mev/execution/`) — spec Phases 5-7
 
-`contracts/src/FlashArb.sol` is the spec's intentionally simple contract: owner-only `execute()` borrows the
-quote token (Aave V3 `flashLoanSimple`, 5 bp; Morpho Blue, fee-free, selectable per call), buys the base on
+`contracts/src/FlashArb.sol` is the spec's intentionally simple contract: owner-only `execute()` (two legs) and
+`executeRoute()` (two to four legs) borrow the quote token (Aave V3 `flashLoanSimple`, 5 bp; Morpho Blue, fee-free, selectable per call), buys the base on
 pool A, sells it on pool B and reverts unless the owner receives at least `minProfit`; the surplus is swept
 in the same transaction. Legs cover every venue the scanner watches: Uniswap V3 / SushiSwap V3 / Aerodrome
 Slipstream (`uniswapV3SwapCallback`), PancakeSwap V3 (`pancakeV3SwapCallback`), Uniswap V2 pairs and

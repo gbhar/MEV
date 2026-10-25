@@ -35,7 +35,7 @@ from mev.pools import state as pool_state
 from mev.pools.prices import usd_prices
 from mev.pools.state import PoolState, fetch_state
 from mev.risk import rules
-from mev.scanner.scanner import scan
+from mev.scanner.scanner import scan, scan_routes
 from mev.simulator.simulate import best, fee_params, gas_cost_usd, gas_price_wei, next_base_fee, simulate
 
 log = logging.getLogger("mev")
@@ -208,8 +208,11 @@ async def process_block(w3, block_number: int, adapters, paper: PaperExecutor, *
 
     t1 = time.perf_counter()
     candidates = scan(states, adapters)
+    if settings.triangular:
+        candidates += scan_routes(states, adapters, tuple(q.strip() for q in settings.route_quotes.split(",") if q.strip()),
+                                  settings.route_max_candidates)
     metrics.scanner_latency.observe(time.perf_counter() - t1)
-    pairs = {(c.buy_pool_id, c.sell_pool_id) for c in candidates}
+    pairs = {c.key for c in candidates}
     paper.note_candidates(pairs)
     features.note_candidates(block_number, pairs)
     metrics.opportunities_detected.inc(len(candidates))
@@ -227,7 +230,7 @@ async def process_block(w3, block_number: int, adapters, paper: PaperExecutor, *
     opened: dict[str, int] = {}
     for c, results in sims:
         unconstrained = best(results)
-        book = rules.Book(daily_loss, failed, pool_busy=c.buy_pool_id in opened or c.sell_pool_id in opened,
+        book = rules.Book(daily_loss, failed, pool_busy=any(pid in opened for pid in c.pools),
                           repeat=paper.is_repeat(c))
         allowed = rules.allowed(results, head_now, c.block_number, settings, book)
         b = best(allowed) if allowed else unconstrained
@@ -235,6 +238,7 @@ async def process_block(w3, block_number: int, adapters, paper: PaperExecutor, *
 
         with session() as db:
             opp = Opportunity(block_number=block_number, head_block=head_now, pair=c.pair, buy_pool_id=c.buy_pool_id, sell_pool_id=c.sell_pool_id,
+                              strategy="triangular" if c.route else "cross_dex_arbitrage", route=c.route_str, path=c.path_str,
                               buy_price=float(c.buy_price), sell_price=float(c.sell_price),
                               spread_bps=float(c.spread_bps), fee_floor_bps=float(c.fee_floor_bps),
                               best_trade_size_usd=unconstrained.trade_size_usd, best_net_usd=float(unconstrained.net_usd),
@@ -254,9 +258,10 @@ async def process_block(w3, block_number: int, adapters, paper: PaperExecutor, *
             db.commit()
             opp_id = opp.id
         if not violations:
-            opened[c.buy_pool_id] = opened[c.sell_pool_id] = b.trade_size_usd
+            for pid in c.pools:
+                opened[pid] = b.trade_size_usd
             if ENGINE is not None and ENGINE.enabled and not replay:
-                quote_key = states[c.buy_pool_id].pool.quote.key
+                quote_key = c.path[0] if c.route else states[c.buy_pool_id].pool.quote.key
                 await ENGINE.submit(opp_id, c, b, head_block=head_now, block_ts=ts, gas_price_wei=gas_price_wei(next_fee, settings),
                                     eth_price=eth_price, quote_usd=prices.get(quote_key, Decimal(1)))
 
@@ -265,8 +270,8 @@ async def process_block(w3, block_number: int, adapters, paper: PaperExecutor, *
         for v in violations:
             metrics.risk_blocks.labels(v.split(" ")[0].rstrip(":")).inc()
         metrics.spread_bps.labels(c.buy_pool_id, c.sell_pool_id).set(float(c.spread_bps))
-        log.info("block=%s %s %s -> %s spread=%.1fbps floor=%.1fbps best=$%s/%.2f chosen=$%s/%.2f %s",
-                 block_number, c.pair, c.buy_pool_id, c.sell_pool_id, c.spread_bps, c.fee_floor_bps,
+        log.info("block=%s %s %s spread=%.1fbps floor=%.1fbps best=$%s/%.2f chosen=$%s/%.2f %s",
+                 block_number, c.pair, " -> ".join(c.pools), c.spread_bps, c.fee_floor_bps,
                  unconstrained.trade_size_usd, unconstrained.net_usd, b.trade_size_usd, b.net_usd,
                  "PAPER EXECUTE" if not violations else f"BLOCK ({'; '.join(violations)})")
 

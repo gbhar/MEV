@@ -7,10 +7,11 @@ import {IMorpho, IMorphoFlashLoanCallback} from "./interfaces/IMorpho.sol";
 import {IConcentratedPool, IPairPool} from "./interfaces/IPools.sol";
 
 /// @title FlashArb — the spec's intentionally simple execution contract (section 16).
-/// @notice One owner-only entry point. Borrow the quote token with a flash loan, buy the base token on
-/// pool A, sell it on pool B, and revert unless the balance covers the repayment plus the caller's minimum
-/// profit. The surplus goes to the owner in the same transaction. There is no pricing, routing or AI logic
-/// here: the off-chain engine decides everything and the contract only enforces the outcome.
+/// @notice Owner-only entry points. Borrow the quote token with a flash loan, swap it through a route of two
+/// (cross-DEX) to four (triangular and longer) legs that ends back in the quote token, and revert unless the
+/// balance covers the repayment plus the caller's minimum profit. The surplus goes to the owner in the same
+/// transaction. There is no pricing, routing or AI logic here: the off-chain engine decides everything and
+/// the contract only enforces the outcome.
 ///
 /// Lenders: Aave V3 flashLoanSimple (5 bp premium, the platform's assumption) and Morpho Blue (fee-free,
 /// selectable per call once an address is configured).
@@ -48,6 +49,16 @@ contract FlashArb is IFlashLoanSimpleReceiver, IMorphoFlashLoanCallback {
         uint256 deadlineBlock; // revert when included later than this block
     }
 
+    /// A route of 2..4 legs: legs[0].tokenIn == quote, each leg's tokenOut feeds the next, the last returns quote.
+    struct RouteParams {
+        Lender lender;
+        address quote;
+        uint256 amount;
+        Leg[] legs;
+        uint256 minProfit;
+        uint256 deadlineBlock;
+    }
+
     address public owner;
     bool public paused;
     IAaveV3Pool public immutable aave;
@@ -63,6 +74,7 @@ contract FlashArb is IFlashLoanSimpleReceiver, IMorphoFlashLoanCallback {
     uint160 private constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
 
     event Executed(address indexed quote, uint256 amount, uint256 repay, uint256 profit, Lender lender);
+    event RouteExecuted(address indexed quote, uint256 amount, uint256 repay, uint256 profit, Lender lender, uint8 legs);
     event OwnerChanged(address indexed previousOwner, address indexed newOwner);
     event PausedSet(bool paused);
 
@@ -74,6 +86,7 @@ contract FlashArb is IFlashLoanSimpleReceiver, IMorphoFlashLoanCallback {
     error BadCallback();
     error ZeroAddress();
     error TransferFailed();
+    error BadRoute();
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
@@ -109,11 +122,30 @@ contract FlashArb is IFlashLoanSimpleReceiver, IMorphoFlashLoanCallback {
 
     // ------------------------------------------------------------------ entry point
 
+    /// Two-leg cross-DEX arbitrage (the original entry point; a route of exactly two legs).
     /// @return profit quote units transferred to the owner.
     function execute(Params calldata p) external onlyOwner returns (uint256 profit) {
+        if (p.buy.tokenIn != p.quote || p.sell.tokenOut != p.quote || p.buy.tokenOut != p.sell.tokenIn) revert BadCallback();
+        Leg[] memory legs = new Leg[](2);
+        legs[0] = p.buy;
+        legs[1] = p.sell;
+        return _run(RouteParams(p.lender, p.quote, p.amount, legs, p.minProfit, p.deadlineBlock));
+    }
+
+    /// Any route of 2..4 legs (triangular: quote -> A -> B -> quote).
+    function executeRoute(RouteParams calldata p) external onlyOwner returns (uint256 profit) {
+        uint256 n = p.legs.length;
+        if (n < 2 || n > 4) revert BadRoute();
+        if (p.legs[0].tokenIn != p.quote || p.legs[n - 1].tokenOut != p.quote) revert BadRoute();
+        for (uint256 i = 1; i < n; i++) {
+            if (p.legs[i].tokenIn != p.legs[i - 1].tokenOut) revert BadRoute();
+        }
+        return _run(p);
+    }
+
+    function _run(RouteParams memory p) private returns (uint256 profit) {
         if (paused) revert IsPaused();
         if (block.number > p.deadlineBlock) revert Expired(p.deadlineBlock, block.number);
-        if (p.buy.tokenIn != p.quote || p.sell.tokenOut != p.quote || p.buy.tokenOut != p.sell.tokenIn) revert BadCallback();
         bytes memory data = abi.encode(p);
         _inFlight = keccak256(data);
         if (p.lender == Lender.AAVE_V3) {
@@ -135,7 +167,7 @@ contract FlashArb is IFlashLoanSimpleReceiver, IMorphoFlashLoanCallback {
         returns (bool)
     {
         if (msg.sender != address(aave) || initiator != address(this) || keccak256(params) != _inFlight) revert BadCallback();
-        Params memory p = abi.decode(params, (Params));
+        RouteParams memory p = abi.decode(params, (RouteParams));
         if (asset != p.quote || amount != p.amount) revert BadCallback();
         _arbitrage(p, amount + premium);
         if (!IERC20(asset).approve(address(aave), amount + premium)) revert TransferFailed();
@@ -144,7 +176,7 @@ contract FlashArb is IFlashLoanSimpleReceiver, IMorphoFlashLoanCallback {
 
     function onMorphoFlashLoan(uint256 assets, bytes calldata data) external override {
         if (msg.sender != address(morpho) || keccak256(data) != _inFlight) revert BadCallback();
-        Params memory p = abi.decode(data, (Params));
+        RouteParams memory p = abi.decode(data, (RouteParams));
         if (assets != p.amount) revert BadCallback();
         _arbitrage(p, assets);
         if (!IERC20(p.quote).approve(address(morpho), assets)) revert TransferFailed();
@@ -169,15 +201,18 @@ contract FlashArb is IFlashLoanSimpleReceiver, IMorphoFlashLoanCallback {
 
     // ------------------------------------------------------------------ the round trip
 
-    function _arbitrage(Params memory p, uint256 repay) private {
-        uint256 baseOut = _swap(p.buy, p.amount);
-        _swap(p.sell, baseOut);
+    function _arbitrage(RouteParams memory p, uint256 repay) private {
+        uint256 amount = p.amount;
+        for (uint256 i = 0; i < p.legs.length; i++) {
+            amount = _swap(p.legs[i], amount);
+        }
         uint256 balance = IERC20(p.quote).balanceOf(address(this));
         if (balance < repay + p.minProfit) revert InsufficientProfit(balance > repay ? balance - repay : 0, p.minProfit);
         uint256 profit = balance - repay;
         _lastProfit = profit;
         if (profit > 0) _transfer(p.quote, owner, profit);
-        emit Executed(p.quote, p.amount, repay, profit, p.lender);
+        if (p.legs.length == 2) emit Executed(p.quote, p.amount, repay, profit, p.lender);
+        else emit RouteExecuted(p.quote, p.amount, repay, profit, p.lender, uint8(p.legs.length));
     }
 
     function _swap(Leg memory leg, uint256 amountIn) private returns (uint256 amountOut) {

@@ -23,6 +23,7 @@ def runtime_code(aave: str = AAVE_V3_POOL, morpho: str = MORPHO_BLUE) -> bytes:
 
 
 def state_override(owner: str, address: str = VIRTUAL_ADDRESS) -> dict:
-    """eth_call/eth_estimateGas state override: our code at `address`, `owner` in slot 0 (paused = false)."""
+    """eth_call/eth_estimateGas state override: our code at `address`, `owner` in slot 0 (paused = false). Passing a
+    deployed contract's address replaces its code for the call (used to shadow routes before a redeploy)."""
     slot = "0x" + OWNER_SLOT.to_bytes(32, "big").hex()
     return {address: {"code": "0x" + runtime_code().hex(), "stateDiff": {slot: "0x" + bytes(12).hex() + owner[2:].lower()}}}

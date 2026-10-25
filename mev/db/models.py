@@ -76,12 +76,13 @@ class PoolSnapshot(Base):
 
 class Opportunity(Base):
     __tablename__ = "opportunities"
-    __table_args__ = (Index("ux_opportunities_block_pair", "block_number", "buy_pool_id", "sell_pool_id", unique=True),)
     id: Mapped[int] = mapped_column(primary_key=True)
     block_number: Mapped[int] = mapped_column(ForeignKey("blocks.block_number"), index=True)
     head_block: Mapped[int | None] = mapped_column(Integer)            # chain head re-read just before the risk check
-    strategy: Mapped[str] = mapped_column(String(32), default="cross_dex_arbitrage")
-    pair: Mapped[str | None] = mapped_column(String(32), index=True)
+    strategy: Mapped[str] = mapped_column(String(32), default="cross_dex_arbitrage")   # cross_dex_arbitrage | triangular
+    pair: Mapped[str | None] = mapped_column(String(64), index=True)                      # base/quote, or Q>A>B>Q for a route
+    route: Mapped[str] = mapped_column(String(255), default="")   # pool ids leg by leg, '>'-separated; "" for two-leg rows
+    path: Mapped[str | None] = mapped_column(Text)         # token addresses the route passes through
     buy_pool_id: Mapped[str] = mapped_column(ForeignKey("pools.pool_id"))
     sell_pool_id: Mapped[str] = mapped_column(ForeignKey("pools.pool_id"))
     buy_price: Mapped[float] = mapped_column(Float)
@@ -95,6 +96,8 @@ class Opportunity(Base):
     risk_passed: Mapped[bool] = mapped_column(Boolean)
     risk_violations: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utcnow)
+    # one row per trade per block (two-leg rows carry route "", older rows NULL, both unique as before)
+    __table_args__ = (Index("ux_opportunities_block_route", "block_number", "buy_pool_id", "sell_pool_id", "route", unique=True),)
 
 
 class Simulation(Base):

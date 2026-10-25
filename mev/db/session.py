@@ -20,6 +20,8 @@ def init_db() -> None:
             for col in table.columns:
                 if col.name not in have:
                     conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col.type.compile(engine.dialect)}"))
+            if table.name == "opportunities":   # 2026-10-25: uniqueness now includes the route (triangular candidates)
+                conn.execute(text("DROP INDEX IF EXISTS ux_opportunities_block_pair"))
             for ix in table.indexes:
                 ix.create(conn, checkfirst=True)
     with session() as db:

@@ -191,6 +191,84 @@ FLASH_ARB = [
  },
  {
   "type": "function",
+  "name": "executeRoute",
+  "inputs": [
+   {
+    "name": "p",
+    "type": "tuple",
+    "internalType": "struct FlashArb.RouteParams",
+    "components": [
+     {
+      "name": "lender",
+      "type": "uint8",
+      "internalType": "enum FlashArb.Lender"
+     },
+     {
+      "name": "quote",
+      "type": "address",
+      "internalType": "address"
+     },
+     {
+      "name": "amount",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "legs",
+      "type": "tuple[]",
+      "internalType": "struct FlashArb.Leg[]",
+      "components": [
+       {
+        "name": "pool",
+        "type": "address",
+        "internalType": "address"
+       },
+       {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "enum FlashArb.Kind"
+       },
+       {
+        "name": "tokenIn",
+        "type": "address",
+        "internalType": "address"
+       },
+       {
+        "name": "tokenOut",
+        "type": "address",
+        "internalType": "address"
+       },
+       {
+        "name": "feePpm",
+        "type": "uint24",
+        "internalType": "uint24"
+       }
+      ]
+     },
+     {
+      "name": "minProfit",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "deadlineBlock",
+      "type": "uint256",
+      "internalType": "uint256"
+     }
+    ]
+   }
+  ],
+  "outputs": [
+   {
+    "name": "profit",
+    "type": "uint256",
+    "internalType": "uint256"
+   }
+  ],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
   "name": "morpho",
   "inputs": [],
   "outputs": [
@@ -347,8 +425,56 @@ FLASH_ARB = [
   "anonymous": False
  },
  {
+  "type": "event",
+  "name": "RouteExecuted",
+  "inputs": [
+   {
+    "name": "quote",
+    "type": "address",
+    "indexed": True,
+    "internalType": "address"
+   },
+   {
+    "name": "amount",
+    "type": "uint256",
+    "indexed": False,
+    "internalType": "uint256"
+   },
+   {
+    "name": "repay",
+    "type": "uint256",
+    "indexed": False,
+    "internalType": "uint256"
+   },
+   {
+    "name": "profit",
+    "type": "uint256",
+    "indexed": False,
+    "internalType": "uint256"
+   },
+   {
+    "name": "lender",
+    "type": "uint8",
+    "indexed": False,
+    "internalType": "enum FlashArb.Lender"
+   },
+   {
+    "name": "legs",
+    "type": "uint8",
+    "indexed": False,
+    "internalType": "uint8"
+   }
+  ],
+  "anonymous": False
+ },
+ {
   "type": "error",
   "name": "BadCallback",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "BadRoute",
   "inputs": []
  },
  {

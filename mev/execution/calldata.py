@@ -13,6 +13,7 @@ LENDER = {"aave_v3": 0, "morpho_blue": 1}
 KIND_CL_UNISWAP, KIND_CL_PANCAKE, KIND_PAIR_V2, KIND_PAIR_AERODROME = 0, 1, 2, 3
 _ERRORS = {function_abi_to_4byte_selector(e): e for e in abi.FLASH_ARB if e["type"] == "error"}
 _ERROR_STRING = bytes.fromhex("08c379a0")   # Error(string)
+ROUTE_SELECTOR = function_abi_to_4byte_selector(next(e for e in abi.FLASH_ARB if e["type"] == "function" and e["name"] == "executeRoute"))
 
 
 def leg_kind(pool: Pool) -> int:
@@ -48,6 +49,41 @@ def build_params(buy_pool: Pool, sell_pool: Pool, amount_in: int, min_profit: in
         raise ValueError(f"{buy_pool.pool_id} and {sell_pool.pool_id} are not the same pair")
     return Params(LENDER[lender], Web3.to_checksum_address(quote.address), amount_in,
                   leg(buy_pool, quote, base), leg(sell_pool, base, quote), min_profit, deadline_block)
+
+
+@dataclass(frozen=True)
+class RouteParams:
+    lender: int
+    quote: str
+    amount: int
+    legs: tuple
+    min_profit: int
+    deadline_block: int
+
+    def as_tuple(self) -> tuple:
+        return (self.lender, self.quote, self.amount, list(self.legs), self.min_profit, self.deadline_block)
+
+
+def build_route_params(pools: dict[str, Pool], route: tuple[str, ...], path: tuple[str, ...], amount_in: int, min_profit: int,
+                       deadline_block: int, lender: str) -> RouteParams:
+    """Legs follow the candidate's path through its pools; the first token of the path is borrowed."""
+    if len(path) != len(route) + 1 or path[0] != path[-1]:
+        raise ValueError("a route must start and end in the borrowed token")
+    legs = []
+    for pid, t_in, t_out in zip(route, path, path[1:]):
+        pool = pools[pid]
+        tokens = {pool.token0.key: pool.token0, pool.token1.key: pool.token1}
+        if t_in not in tokens or t_out not in tokens:
+            raise ValueError(f"{pid} does not hold {t_in} -> {t_out}")
+        legs.append(leg(pool, tokens[t_in], tokens[t_out]))
+    first = pools[route[0]]
+    quote = first.token0 if first.token0.key == path[0] else first.token1
+    return RouteParams(LENDER[lender], Web3.to_checksum_address(quote.address), amount_in, tuple(legs), min_profit, deadline_block)
+
+
+def encode_execute_route(params: RouteParams) -> bytes:
+    c = Web3().eth.contract(abi=abi.FLASH_ARB)
+    return bytes.fromhex(c.encode_abi("executeRoute", args=[params.as_tuple()])[2:])
 
 
 def encode_execute(params: Params) -> bytes:

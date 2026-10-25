@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 art = json.loads((ROOT / "contracts/out/FlashArb.sol/FlashArb.json").read_text())
-keep = {"execute", "owner", "paused", "setPaused", "setOwner", "rescue", "aave", "morpho"}
+keep = {"execute", "executeRoute", "owner", "paused", "setPaused", "setOwner", "rescue", "aave", "morpho"}
 abi = [e for e in art["abi"] if e["type"] in ("event", "error") or (e["type"] == "function" and e["name"] in keep)]
 p = ROOT / "mev/chain/abi.py"
 s = p.read_text()

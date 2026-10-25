@@ -43,7 +43,7 @@ VIRTUAL_OWNER = "0x000000000000000000000000000000000000F1A5"   # shadow `from` w
 
 @dataclass(frozen=True)
 class Built:
-    params: calldata.Params
+    params: calldata.Params | calldata.RouteParams
     tx: dict            # EIP-1559 fields without nonce/from
     expected_profit: int
     quote_decimals: int
@@ -64,6 +64,7 @@ class ExecutionEngine:
         if self.virtual:
             self.contract = virtual.VIRTUAL_ADDRESS
         self.override: dict | None = None
+        self.route_override: dict | None = None   # set when the deployed contract lacks executeRoute (shadow only)
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -99,6 +100,14 @@ class ExecutionEngine:
             log.info("shadow execution: contract=%s owner=%s (transactions are built and simulated, never sent)", self.contract, owner)
         if paused:
             log.warning("FlashArb is paused on-chain; every execution will revert with IsPaused")
+        code = await self.w3.eth.get_code(self.contract)
+        if calldata.ROUTE_SELECTOR not in bytes(code):
+            if self.mode == "shadow":
+                self.route_override = virtual.state_override(owner, self.contract)
+                log.warning("deployed FlashArb predates executeRoute: route candidates are shadowed against the current bytecode "
+                            "(state override); redeploy (make contract-deploy) before going live with routes")
+            else:
+                log.error("deployed FlashArb has no executeRoute: route candidates will be skipped in live mode until it is redeployed")
         with session() as db:
             total = db.scalar(select(func.sum(Execution.realized_usd)).where(Execution.mode == "live"))
         self.live_total = Decimal(str(total or 0))
@@ -108,17 +117,28 @@ class ExecutionEngine:
 
     def build(self, c: Candidate, r: SimResult, head_block: int, gas_price_wei: int, quote_usd: Decimal) -> Built:
         pools = self.pools()
-        buy, sell = pools[c.buy_pool_id], pools[c.sell_pool_id]
-        scale = Decimal(10 ** buy.quote.decimals)
+        first = pools[c.route[0]] if c.route else pools[c.buy_pool_id]
+        if c.route:
+            quote = first.token0 if first.token0.key == c.path[0] else first.token1
+        else:
+            quote = first.quote
+        scale = Decimal(10 ** quote.decimals)
         min_profit = int((r.gas_usd + Decimal(str(self.s.min_net_profit_usd))) / quote_usd * scale)
-        lender = self.lenders.choose(buy.quote.address, r.amount_in)
-        premium = r.amount_in * self.lenders.fee_bps(buy.quote.address, r.amount_in) // 10_000
-        params = calldata.build_params(buy, sell, r.amount_in, min_profit, head_block + self.s.execution_deadline_blocks, lender)
+        lender = self.lenders.choose(quote.address, r.amount_in)
+        premium = r.amount_in * self.lenders.fee_bps(quote.address, r.amount_in) // 10_000
+        deadline = head_block + self.s.execution_deadline_blocks
+        if c.route:
+            params = calldata.build_route_params(pools, c.route, c.path, r.amount_in, min_profit, deadline, lender)
+            data = calldata.encode_execute_route(params)
+        else:
+            params = calldata.build_params(first, pools[c.sell_pool_id], r.amount_in, min_profit, deadline, lender)
+            data = calldata.encode_execute(params)
         priority = self.s.priority_fee_wei
-        tx = {"chainId": 8453, "to": self.contract, "value": 0, "data": calldata.encode_execute(params), "type": 2,
-              "gas": self.s.execution_gas_limit, "maxPriorityFeePerGas": priority,
+        gas_limit = self.s.execution_gas_limit + (len(c.route) - 2) * self.s.execution_gas_per_extra_leg if c.route else self.s.execution_gas_limit
+        tx = {"chainId": 8453, "to": self.contract, "value": 0, "data": data, "type": 2,
+              "gas": gas_limit, "maxPriorityFeePerGas": priority,
               "maxFeePerGas": 2 * max(gas_price_wei - priority, 0) + priority}   # room for two base-fee increases
-        return Built(params, tx, r.amount_back - r.amount_in - premium, buy.quote.decimals, lender)
+        return Built(params, tx, r.amount_back - r.amount_in - premium, quote.decimals, lender)
 
     def live_blocked(self, c: Candidate, r: SimResult, block_ts: int, db) -> str | None:
         """The live cap that stops this send, or None. Shadow mode ignores these."""
@@ -148,7 +168,16 @@ class ExecutionEngine:
             return self._record(opportunity_id, c, r, head_block, None, status="error", revert_reason=f"build: {e}")
         row = self._record(opportunity_id, c, r, head_block, built, status="built")
         call = {**built.tx, "from": self.signer.address if self.signer else (self.owner or self.contract)}
-        profit, gas, revert = await self._simulate(call)
+        if c.route and self.route_override is not None and self.mode == "shadow":
+            override, self.override = self.override, self.route_override
+            try:
+                profit, gas, revert = await self._simulate(call)
+            finally:
+                self.override = override
+        elif c.route and self.route_override is None and not self.virtual and self.mode == "live" and not await self._has_route_selector():
+            profit, gas, revert = None, None, "contract lacks executeRoute (redeploy)"
+        else:
+            profit, gas, revert = await self._simulate(call)
         latency = (time.perf_counter() - t0) * 1000
         with session() as db:
             row = db.get(Execution, row.id)
@@ -253,12 +282,21 @@ class ExecutionEngine:
         log.warning("LIVE %s execution=%s tx=%s profit=%s (%.4f USD) gas=%.4f USD realized=%.4f USD total=%.4f",
                     "MINED" if receipt["status"] == 1 else "FAILED", row_id, tx_hash, profit, profit_usd, gas_usd, realized, self.live_total)
 
+    async def _has_route_selector(self) -> bool:
+        if not hasattr(self, "_route_ok"):
+            code = await self.w3.eth.get_code(self.contract)
+            self._route_ok = calldata.ROUTE_SELECTOR in bytes(code)
+        return self._route_ok
+
     @staticmethod
     def _executed_logs(contract, receipt) -> list:
-        try:
-            return list(contract.events.Executed().process_receipt(receipt))
-        except Exception:
-            return []
+        out = []
+        for name in ("Executed", "RouteExecuted"):
+            try:
+                out += list(getattr(contract.events, name)().process_receipt(receipt))
+            except Exception:
+                pass
+        return out
 
     def _record(self, opportunity_id: int, c: Candidate, r: SimResult, head_block: int, built: Built | None, *, status: str,
                 revert_reason: str | None = None) -> Execution:

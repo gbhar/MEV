@@ -67,6 +67,8 @@ def gas_cost_usd(gas_price_wei: int, eth_price_usd: Decimal, s: Settings) -> Dec
 def simulate_size(c: Candidate, states: dict[str, PoolState], adapters: dict[str, DexAdapter],
                   size_usd: int, gas_usd: Decimal, s: Settings, prices: dict[str, Decimal] | None = None, lenders=None) -> SimResult:
     """lenders: an optional mev.execution.lenders.LenderBook that prices the flash fee per quote token and size."""
+    if c.route:
+        return simulate_route(c, states, adapters, size_usd, gas_usd, s, prices, lenders)
     buy, sell = states[c.buy_pool_id], states[c.sell_pool_id]
     quote, base = buy.pool.quote, buy.pool.base
     quote_usd = (prices or {}).get(quote.key, Decimal(1))
@@ -88,6 +90,33 @@ def simulate_size(c: Candidate, states: dict[str, PoolState], adapters: dict[str
     slippage = size * (1 - buy_fee) * (1 - sell_fee) * ratio - size - gross
     return SimResult(size_usd, amount_in, q1.amount_out, q2.amount_out, gross, flash, gas_usd, buffer, net,
                      q1.exact and q2.exact, dex_fee, slippage, quote.symbol)
+
+
+def simulate_route(c: Candidate, states: dict[str, PoolState], adapters: dict[str, DexAdapter],
+                   size_usd: int, gas_usd: Decimal, s: Settings, prices: dict[str, Decimal] | None = None, lenders=None) -> SimResult:
+    """A route of N legs: borrow the first token of c.path, swap leg by leg, end in the same token."""
+    first = states[c.route[0]].pool
+    quote = first.token0 if first.token0.key == c.path[0] else first.token1
+    quote_usd = (prices or {}).get(quote.key, Decimal(1))
+    scale = Decimal(10**quote.decimals)
+    amount_in = int(Decimal(size_usd) / quote_usd * scale)
+    amount, exact, first_out = amount_in, True, 0
+    for i, pid in enumerate(c.route):
+        st = states[pid]
+        token_in = st.pool.token0 if st.pool.token0.key == c.path[i] else st.pool.token1
+        q = adapters[st.pool.kind].quote_exact_in(st, token_in.address, amount)
+        amount, exact = q.amount_out, exact and q.exact
+        if i == 0:
+            first_out = amount
+    gross = (Decimal(amount) - Decimal(amount_in)) / scale * quote_usd
+    fee_bps = lenders.fee_bps(quote.address, amount_in) if lenders is not None else s.flash_fee_bps
+    flash = Decimal(size_usd) * fee_bps / 10_000
+    buffer = Decimal(size_usd) * s.safety_buffer_bps / 10_000
+    net = gross - flash - gas_usd - buffer
+    size = Decimal(size_usd)
+    dex_fee = size * c.fee_floor_bps / 10_000
+    slippage = size * (c.sell_price - 1) - dex_fee - gross   # gross multiple at marginal prices minus fees minus what we got
+    return SimResult(size_usd, amount_in, first_out, amount, gross, flash, gas_usd, buffer, net, exact, dex_fee, slippage, quote.symbol)
 
 
 def simulate(c: Candidate, states: dict[str, PoolState], adapters: dict[str, DexAdapter],

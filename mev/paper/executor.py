@@ -68,9 +68,10 @@ class PaperExecutor:
         self.cumulative_net = Decimal(str(total or 0))
         for t, o in rows:
             c = Candidate(o.buy_pool_id, o.sell_pool_id, Decimal(str(o.buy_price)), Decimal(str(o.sell_price)),
-                          Decimal(str(o.spread_bps)), Decimal(str(o.fee_floor_bps)), o.block_number, o.pair or "")
+                          Decimal(str(o.spread_bps)), Decimal(str(o.fee_floor_bps)), o.block_number, o.pair or "",
+                          tuple(o.route.split(">")) if o.route else (), tuple(o.path.split(">")) if o.path else ())
             self.pending.append(Pending(t.id, c, t.trade_size_usd, Decimal(str(t.expected_net_usd))))
-            self.active_pairs[(c.buy_pool_id, c.sell_pool_id)] = t.opened_block
+            self.active_pairs[c.key] = t.opened_block
         paper_profit_usd.set(float(self.cumulative_net))
         if rows:
             log.info("reloaded %d unresolved paper trades: %s", len(rows), [t.id for t, _ in rows])
@@ -82,11 +83,11 @@ class PaperExecutor:
         db.add(row)
         db.flush()
         self.pending.append(Pending(row.id, c, size_usd, expected_net))
-        self.active_pairs[(c.buy_pool_id, c.sell_pool_id)] = c.block_number
+        self.active_pairs[c.key] = c.block_number
         paper_trades.inc()
         return row.id
 
-    def note_candidates(self, pairs: set[tuple[str, str]]) -> None:
+    def note_candidates(self, pairs: set[tuple[str, ...]]) -> None:
         """A pair stays active only while it is a candidate on every processed block."""
         for pair in list(self.active_pairs):
             if pair not in pairs:
@@ -98,7 +99,7 @@ class PaperExecutor:
     def is_repeat(self, c: Candidate) -> bool:
         """True while an open trade's pair is still in spread and shares a pool with this candidate: the
         mispriced liquidity was already sold once, so it must not be booked again."""
-        return any(c.buy_pool_id in pair or c.sell_pool_id in pair for pair in self.active_pairs)
+        return any(pid in key for key in self.active_pairs for pid in c.pools)
 
     def book(self, block_ts: int) -> tuple[Decimal, int]:
         """Deterministic risk inputs from the table: realized loss in the UTC day of block_ts (positive =
@@ -122,7 +123,7 @@ class PaperExecutor:
         """gas_usd is what a transaction included in this block pays (this block's base fee + tip)."""
         resolved: list[tuple[Pending, SimResult, Decimal]] = []
         for p in list(self.pending):
-            if p.candidate.buy_pool_id not in states or p.candidate.sell_pool_id not in states:
+            if any(pid not in states for pid in p.candidate.pools):
                 continue  # a pool fetch failed this block; try again on the next one
             try:
                 r = simulate_size(p.candidate, states, self.adapters, p.size_usd, gas_usd, self.s, prices, self.lenders)

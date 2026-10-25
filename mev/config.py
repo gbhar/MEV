@@ -71,6 +71,12 @@ class Settings(BaseSettings):
     max_daily_loss_usd: float = 500.0    # realized paper loss in the current UTC day (block time)
     max_failed_trades: int = 5           # consecutive resolutions that were no longer profitable
 
+    # Strategies. Two-leg cross-DEX arbitrage is always on; triangular routes quote -> A -> B -> quote use the best
+    # venue per hop among the watched pools (mev/scanner/scanner.py: scan_routes).
+    triangular: bool = True
+    route_quotes: str = "USDC,WETH"          # tokens a route may start and end in (borrowed from the flash lender)
+    route_max_candidates: int = 50           # best routes per block that are simulated
+
     # Execution (spec Phases 5-7). paper: no transaction exists. shadow: the exact FlashArb transaction is built
     # and eth_call-simulated at head, never sent (Phase 6). live: signed and sent under the caps below (Phase 7).
     # Live needs flash_arb_address and a signer key (Kubernetes secret mev-signer) and stops while the kill switch
@@ -84,6 +90,7 @@ class Settings(BaseSettings):
     signer_key_file: str | None = None         # alternative: path of a file holding the hex key
     execution_deadline_blocks: int = 2         # the transaction reverts if included later than head + this
     execution_gas_limit: int = 450_000
+    execution_gas_per_extra_leg: int = 120_000   # added to the limit for each leg beyond two
     execution_halt: bool = False
     execution_halt_file: str = "HALT"
     live_max_trade_size_usd: int = 1_000
