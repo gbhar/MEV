@@ -42,7 +42,7 @@ class Tracker:
             return
         c = self.candidate
         states = await fetch_states(w3, load_active_pools(), block_number)
-        if c.buy_pool_id not in states or c.sell_pool_id not in states:
+        if any(pid not in states for pid in c.pools):
             return
         net = simulate_size(c, states, adapters, self.size_usd, self.gas_usd, s, usd_prices(states, adapters)).net_usd
         self.last_block = block_number
@@ -64,7 +64,7 @@ def closing_swaps(c: Candidate, block_number: int) -> list[dict]:
     """Swaps stored by the loop's indexer for either pool in the block that closed the spread, largest first."""
     with session() as db:
         rows = db.scalars(select(Swap).where(Swap.block_number == block_number, Swap.event_type == "swap",
-                                             Swap.pool_id.in_([c.buy_pool_id, c.sell_pool_id]))).all()
+                                             Swap.pool_id.in_(list(c.pools)))).all()
     rows.sort(key=lambda r: -(r.volume_usd or 0))
     return [{"tx": r.transaction_hash, "log_index": r.log_index, "pool_id": r.pool_id, "volume_usd": r.volume_usd,
              "amount0": r.amount0, "amount1": r.amount1} for r in rows[:5]]

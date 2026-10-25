@@ -28,6 +28,8 @@ def _topic(sig: str) -> str:
 
 
 TOPIC_V3_SWAP = _topic("Swap(address,address,int256,int256,uint160,uint128,int24)")
+# PancakeSwap V3 appends protocolFeesToken0/1 to Swap, which changes the topic; the leading fields are identical.
+TOPIC_PCS_SWAP = _topic("Swap(address,address,int256,int256,uint160,uint128,int24,uint128,uint128)")
 TOPIC_V3_MINT = _topic("Mint(address,address,int24,int24,uint128,uint256,uint256)")
 TOPIC_V3_BURN = _topic("Burn(address,int24,int24,uint128,uint256,uint256)")
 TOPIC_V2_SWAP = _topic("Swap(address,uint256,uint256,uint256,uint256,address)")
@@ -65,8 +67,8 @@ def decode_log(log_: dict, pools_by_address: dict[str, Pool]) -> PoolEvent | Non
     data = bytes(log_["data"])
     base = dict(pool_id=pool.pool_id, block_number=log_["blockNumber"], tx_hash=_hex(log_["transactionHash"]), log_index=log_["logIndex"])
     if pool.kind == "uniswap_v3":
-        if topic == TOPIC_V3_SWAP:
-            a0, a1, sqrt_p, liq, tick = decode(["int256", "int256", "uint160", "uint128", "int24"], data)
+        if topic in (TOPIC_V3_SWAP, TOPIC_PCS_SWAP):
+            a0, a1, sqrt_p, liq, tick = decode(["int256", "int256", "uint160", "uint128", "int24"], data[:5 * 32])
             return PoolEvent(event_type="swap", amount0=a0, amount1=a1, sqrt_price_x96=sqrt_p, liquidity=liq, tick=tick, **base)
         if topic == TOPIC_V3_MINT:
             _, _, a0, a1 = decode(["address", "uint128", "uint256", "uint256"], data)

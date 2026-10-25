@@ -2,13 +2,14 @@ from eth_abi import encode
 from hexbytes import HexBytes
 
 from mev.chain.addresses import POOLS
-from mev.indexer.events import (TOPIC_AERO_SYNC, TOPIC_V2_SWAP, TOPIC_V3_SWAP, decode_log, end_of_block, reconcile, swap_rows)
+from mev.indexer.events import (TOPIC_AERO_SYNC, TOPIC_PCS_SWAP, TOPIC_V2_SWAP, TOPIC_V3_SWAP, decode_log, end_of_block, reconcile, swap_rows)
 from mev.pools.state import PoolState
 
 BY_ADDR = {p.address.lower(): p for p in POOLS}
 V3 = next(p for p in POOLS if p.pool_id == "univ3_weth_usdc_5")
 AERO = next(p for p in POOLS if p.pool_id == "aero_weth_usdc_v")
 V2 = next(p for p in POOLS if p.pool_id == "univ2_weth_usdc")
+PCS = next(p for p in POOLS if p.variant == "pancake")
 
 
 def mk(pool, topic, data, idx=0, block=100):
@@ -59,3 +60,14 @@ def test_burn_after_swap_relaxes_liquidity_check():
     states = {V3.pool_id: PoolState(V3, 100, sqrt_price_x96=3856509629693946940415200, tick=-198617, liquidity=990)}
     assert reconcile(states, [swap, burn], POOLS, 100)[V3.pool_id] is True      # liquidity moved by the burn: ignored
     assert reconcile(states, [swap], POOLS, 100)[V3.pool_id] is False            # no burn: liquidity must match
+
+
+def test_decode_pancake_v3_swap_with_protocol_fee_fields():
+    """PancakeSwap V3's Swap has two trailing uint128 fields and therefore a different topic; until 2026-10-25 it was
+    never decoded, so Pancake pools were only refreshed by the round-robin and their price went stale for ~20 blocks."""
+    data = encode(["int256", "int256", "uint160", "uint128", "int24", "uint128", "uint128"],
+                  [-10**18, 2_365_000_000, 3856509629693946940415200, 985235654424548596, -198617, 123, 456])
+    assert TOPIC_PCS_SWAP != TOPIC_V3_SWAP
+    e = decode_log(mk(PCS, TOPIC_PCS_SWAP, data), BY_ADDR)
+    assert e is not None and e.event_type == "swap" and e.amount0 == -10**18 and e.tick == -198617 and e.liquidity == 985235654424548596
+    assert decode_log(mk(PCS, TOPIC_V3_SWAP, data[:5 * 32]), BY_ADDR).event_type == "swap"   # a Uniswap-shaped log still decodes

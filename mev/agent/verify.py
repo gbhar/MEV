@@ -22,10 +22,24 @@ async def verify(w3: AsyncWeb3, c: Candidate, size_usd: int, stored_net_usd: flo
     states = await fetch_states(w3, list(by_id.values()), c.block_number)   # all pools: USD prices need the reference pools
     prices = usd_prices(states, adapters)
     r = simulate_size(c, states, adapters, size_usd, gas_usd, s, prices)
-    buy, sell = by_id[c.buy_pool_id], by_id[c.sell_pool_id]
-    quote, base = buy.quote, buy.base
     out: dict = {"block_number": c.block_number, "size_usd": size_usd, "stored_net_usd": stored_net_usd,
                  "fresh_net_usd": float(r.net_usd), "exact": r.exact, "legs": {}}
+    if c.route:
+        # Routes: re-quote every concentrated-liquidity leg on its quoter, chaining the local outputs.
+        amount = r.amount_in
+        for i, pid in enumerate(c.route):
+            pool = by_id[pid]
+            t_in = pool.token0 if pool.token0.key == c.path[i] else pool.token1
+            t_out = pool.token1 if t_in is pool.token0 else pool.token0
+            local = adapters[pool.kind].quote_exact_in(states[pid], t_in.address, amount).amount_out
+            if pool.kind == "uniswap_v3":
+                chain = await quote_onchain(w3, QUOTERS[pool.variant], t_in.address, t_out.address, amount, quoter_tier(pool), c.block_number, pool.variant)
+                out["legs"][f"leg{i}"] = {"pool": pid, "local_out": local, "quoter_out": chain, "match": chain == local}
+            amount = local
+        out["all_match"] = all(l["match"] for l in out["legs"].values()) and abs(float(r.net_usd) - stored_net_usd) < 0.01
+        return out
+    buy, sell = by_id[c.buy_pool_id], by_id[c.sell_pool_id]
+    quote, base = buy.quote, buy.base
     if buy.kind == "uniswap_v3":
         chain = await quote_onchain(w3, QUOTERS[buy.variant], quote.address, base.address, r.amount_in, quoter_tier(buy), c.block_number, buy.variant)
         out["legs"]["buy"] = {"local_out": r.token0_out, "quoter_out": chain, "match": chain == r.token0_out}
