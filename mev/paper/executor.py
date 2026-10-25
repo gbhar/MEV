@@ -50,9 +50,10 @@ def realized_net(r: SimResult) -> Decimal:
 
 
 class PaperExecutor:
-    def __init__(self, settings: Settings, adapters: dict[str, DexAdapter]):
+    def __init__(self, settings: Settings, adapters: dict[str, DexAdapter], lenders=None):
         self.s = settings
         self.adapters = adapters
+        self.lenders = lenders
         self.pending: list[Pending] = []
         self.active_pairs: dict[tuple[str, str], int] = {}   # (buy, sell) -> block of the open trade on that pair
         self.cumulative_net = Decimal(0)
@@ -124,7 +125,7 @@ class PaperExecutor:
             if p.candidate.buy_pool_id not in states or p.candidate.sell_pool_id not in states:
                 continue  # a pool fetch failed this block; try again on the next one
             try:
-                r = simulate_size(p.candidate, states, self.adapters, p.size_usd, gas_usd, self.s, prices)
+                r = simulate_size(p.candidate, states, self.adapters, p.size_usd, gas_usd, self.s, prices, self.lenders)
                 realized = realized_net(r)
                 with session() as db:
                     row = db.get(PaperTrade, p.trade_id)

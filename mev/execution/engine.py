@@ -31,6 +31,7 @@ from mev.config import Settings
 from mev.db.models import Execution
 from mev.db.session import session
 from mev.execution import calldata, killswitch, virtual
+from mev.execution.lenders import LenderBook
 from mev.execution.signer import Signer
 from mev.pools.registry import Pool
 from mev.scanner.scanner import Candidate
@@ -46,11 +47,13 @@ class Built:
     tx: dict            # EIP-1559 fields without nonce/from
     expected_profit: int
     quote_decimals: int
+    lender: str
 
 
 class ExecutionEngine:
-    def __init__(self, s: Settings, w3: AsyncWeb3, signer: Signer | None, pools: Callable[[], dict[str, Pool]]):
+    def __init__(self, s: Settings, w3: AsyncWeb3, signer: Signer | None, pools: Callable[[], dict[str, Pool]], lenders: LenderBook | None = None):
         self.s, self.w3, self.signer, self.pools = s, w3, signer, pools
+        self.lenders = lenders or LenderBook(s)
         self.mode = s.execution_mode
         self.contract = Web3.to_checksum_address(s.flash_arb_address) if s.flash_arb_address else None
         self.tracking: set[asyncio.Task] = set()
@@ -108,13 +111,14 @@ class ExecutionEngine:
         buy, sell = pools[c.buy_pool_id], pools[c.sell_pool_id]
         scale = Decimal(10 ** buy.quote.decimals)
         min_profit = int((r.gas_usd + Decimal(str(self.s.min_net_profit_usd))) / quote_usd * scale)
-        premium = r.amount_in * self.s.flash_fee_bps // 10_000
-        params = calldata.build_params(buy, sell, r.amount_in, min_profit, head_block + self.s.execution_deadline_blocks, self.s.flash_lender)
+        lender = self.lenders.choose(buy.quote.address, r.amount_in)
+        premium = r.amount_in * self.lenders.fee_bps(buy.quote.address, r.amount_in) // 10_000
+        params = calldata.build_params(buy, sell, r.amount_in, min_profit, head_block + self.s.execution_deadline_blocks, lender)
         priority = self.s.priority_fee_wei
         tx = {"chainId": 8453, "to": self.contract, "value": 0, "data": calldata.encode_execute(params), "type": 2,
               "gas": self.s.execution_gas_limit, "maxPriorityFeePerGas": priority,
               "maxFeePerGas": 2 * max(gas_price_wei - priority, 0) + priority}   # room for two base-fee increases
-        return Built(params, tx, r.amount_back - r.amount_in - premium, buy.quote.decimals)
+        return Built(params, tx, r.amount_back - r.amount_in - premium, buy.quote.decimals, lender)
 
     def live_blocked(self, c: Candidate, r: SimResult, block_ts: int, db) -> str | None:
         """The live cap that stops this send, or None. Shadow mode ignores these."""
@@ -259,7 +263,7 @@ class ExecutionEngine:
     def _record(self, opportunity_id: int, c: Candidate, r: SimResult, head_block: int, built: Built | None, *, status: str,
                 revert_reason: str | None = None) -> Execution:
         row = Execution(opportunity_id=opportunity_id, block_number=c.block_number, head_block=head_block, mode=self.mode,
-                        lender=self.s.flash_lender, status=status, contract=self.contract,
+                        lender=built.lender if built else self.s.flash_lender, status=status, contract=self.contract,
                         signer=self.signer.address if self.signer else None, quote_symbol=r.quote_symbol,
                         trade_size_usd=r.trade_size_usd, amount_in=str(r.amount_in),
                         min_profit=str(built.params.min_profit) if built else "0",

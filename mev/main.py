@@ -28,6 +28,7 @@ from mev.indexer import events as indexer
 from mev.db.session import init_db, load_active_pools, session
 from mev.dex.base import get_adapter
 from mev.execution.engine import ExecutionEngine
+from mev.execution.lenders import LenderBook
 from mev.execution.signer import load_signer
 from mev.paper.executor import PaperExecutor
 from mev.pools import state as pool_state
@@ -48,6 +49,7 @@ _rr: int = 0                        # round-robin cursor for tick-window refresh
 _behind: bool = False               # the loop had to skip blocks to reach this one: no optional RPC work
 _head_at_fetch: int | None = None   # chain head read concurrently with the pool-state fetch (saves a round trip)
 ENGINE: ExecutionEngine | None = None   # shadow/live execution; None in paper mode
+LENDERS: LenderBook | None = None       # per-trade flash lender / fee (Morpho Blue when it has the liquidity, else Aave)
 
 
 def reload_pools() -> None:
@@ -171,6 +173,8 @@ async def process_block(w3, block_number: int, adapters, paper: PaperExecutor, *
                     block_number, block["parentHash"].hex(), block_number - 1, prev.block_hash)
 
     prices = usd_prices(states, adapters)
+    if LENDERS is not None and not replay:
+        await LENDERS.refresh(w3, [p.quote.address for p in POOLS], block_number)
     eth_price = prices.get(WETH.lower())
     if eth_price is None:
         raise RuntimeError(f"block {block_number}: no WETH/USD reference price (reference pools missing)")
@@ -217,7 +221,7 @@ async def process_block(w3, block_number: int, adapters, paper: PaperExecutor, *
     sims = []
     for c in candidates:
         t2 = time.perf_counter()
-        sims.append((c, simulate(c, states, adapters, gas_usd, settings, prices)))
+        sims.append((c, simulate(c, states, adapters, gas_usd, settings, prices, LENDERS)))
         metrics.simulation_latency.observe(time.perf_counter() - t2)
     sims.sort(key=lambda cr: best(cr[1]).net_usd, reverse=True)
     opened: dict[str, int] = {}
@@ -314,9 +318,10 @@ async def run(max_blocks: int | None) -> None:
         start_http_server(settings.metrics_port)
     w3 = make_web3()
     adapters = {k: get_adapter(k) for k in ("uniswap_v3", "constant_product")}
-    paper = PaperExecutor(settings, adapters)
-    global ENGINE
-    ENGINE = ExecutionEngine(settings, w3, load_signer(settings), lambda: {p.pool_id: p for p in POOLS})
+    global ENGINE, LENDERS
+    LENDERS = LenderBook(settings)
+    paper = PaperExecutor(settings, adapters, LENDERS)
+    ENGINE = ExecutionEngine(settings, w3, load_signer(settings), lambda: {p.pool_id: p for p in POOLS}, LENDERS)
     await ENGINE.startup()
     log.info("chain_id=%s rpc=%s (+%d fallbacks) pools=%d pairs=%d metrics=:%d execution=%s", await w3.eth.chain_id, rpc.redacted(rpc.current(w3)), len(rpc.endpoints()) - 1, len(POOLS),
              len({p.pair for p in POOLS}), settings.metrics_port, settings.execution_mode)

@@ -65,7 +65,8 @@ def gas_cost_usd(gas_price_wei: int, eth_price_usd: Decimal, s: Settings) -> Dec
 
 
 def simulate_size(c: Candidate, states: dict[str, PoolState], adapters: dict[str, DexAdapter],
-                  size_usd: int, gas_usd: Decimal, s: Settings, prices: dict[str, Decimal] | None = None) -> SimResult:
+                  size_usd: int, gas_usd: Decimal, s: Settings, prices: dict[str, Decimal] | None = None, lenders=None) -> SimResult:
+    """lenders: an optional mev.execution.lenders.LenderBook that prices the flash fee per quote token and size."""
     buy, sell = states[c.buy_pool_id], states[c.sell_pool_id]
     quote, base = buy.pool.quote, buy.pool.base
     quote_usd = (prices or {}).get(quote.key, Decimal(1))
@@ -74,7 +75,8 @@ def simulate_size(c: Candidate, states: dict[str, PoolState], adapters: dict[str
     q1 = adapters[buy.pool.kind].quote_exact_in(buy, quote.address, amount_in)
     q2 = adapters[sell.pool.kind].quote_exact_in(sell, base.address, q1.amount_out)
     gross = (Decimal(q2.amount_out) - Decimal(amount_in)) / scale * quote_usd
-    flash = Decimal(size_usd) * s.flash_fee_bps / 10_000   # the configured lender's fee (Aave 5 bp, Morpho Blue 0)
+    fee_bps = lenders.fee_bps(quote.address, amount_in) if lenders is not None else s.flash_fee_bps   # Aave 5 bp, Morpho Blue 0
+    flash = Decimal(size_usd) * fee_bps / 10_000
     buffer = Decimal(size_usd) * s.safety_buffer_bps / 10_000
     net = gross - flash - gas_usd - buffer
     # Diagnostics at the marginal prices of the states being simulated (already inside gross):
@@ -89,9 +91,9 @@ def simulate_size(c: Candidate, states: dict[str, PoolState], adapters: dict[str
 
 
 def simulate(c: Candidate, states: dict[str, PoolState], adapters: dict[str, DexAdapter],
-             gas_usd: Decimal, s: Settings, prices: dict[str, Decimal] | None = None) -> list[SimResult]:
+             gas_usd: Decimal, s: Settings, prices: dict[str, Decimal] | None = None, lenders=None) -> list[SimResult]:
     """Grid search over trade sizes. The caller picks the best size that passes the risk rules."""
-    return [simulate_size(c, states, adapters, size, gas_usd, s, prices) for size in s.trade_sizes_usd]
+    return [simulate_size(c, states, adapters, size, gas_usd, s, prices, lenders) for size in s.trade_sizes_usd]
 
 
 def best(results: list[SimResult]) -> SimResult:

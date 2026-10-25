@@ -295,3 +295,50 @@ def test_live_never_uses_a_virtual_contract():
     assert not e.virtual and e.contract is None
     with pytest.raises(RuntimeError):
         asyncio.run(e.startup())
+
+
+# ---------------------------------------------------------------- automatic lender choice
+
+def test_lender_book_picks_morpho_when_it_has_the_liquidity():
+    from mev.execution.lenders import LenderBook
+    book = LenderBook(Settings(_env_file=None, flash_lender="auto"))
+    book.morpho_idle[WETH.address.lower()] = 10 * 10**18
+    assert book.choose(WETH.address, 9 * 10**18) == "morpho_blue" and book.fee_bps(WETH.address, 9 * 10**18) == 0
+    assert book.choose(WETH.address, 95 * 10**17) == "aave_v3" and book.fee_bps(WETH.address, 95 * 10**17) == 5   # 110% headroom
+    assert book.choose(VIRTUAL.address, 1) == "aave_v3"   # unknown token -> Aave
+    fixed = LenderBook(Settings(_env_file=None, flash_lender="morpho_blue"))
+    assert fixed.choose(VIRTUAL.address, 10**30) == "morpho_blue" and fixed.fee_bps(VIRTUAL.address, 1) == 0
+
+
+def test_engine_uses_the_book_per_trade():
+    from mev.execution.lenders import LenderBook
+    s = settings(execution_mode="shadow", flash_lender="auto")
+    book = LenderBook(s)
+    book.morpho_idle[WETH.address.lower()] = 10**24
+    e = ExecutionEngine(s, FakeW3(), None, lambda: POOLS, book)
+    b = e.build(CAND, SIM, 101, 55_000_000, Decimal(2300))
+    assert b.lender == "morpho_blue" and b.params.lender == 1 and b.expected_profit == SIM.amount_back - SIM.amount_in
+    book.morpho_idle[WETH.address.lower()] = 0
+    b = e.build(CAND, SIM, 101, 55_000_000, Decimal(2300))
+    assert b.lender == "aave_v3" and b.params.lender == 0 and b.expected_profit == SIM.amount_back - SIM.amount_in - SIM.amount_in * 5 // 10_000
+    row = submit(e)
+    assert row.lender == "aave_v3"
+
+
+def test_simulator_charges_the_book_fee():
+    from mev.execution.lenders import LenderBook
+    from mev.simulator.simulate import simulate_size
+    from mev.pools.state import PoolState
+    from mev.scanner.scanner import scan
+    A = Pool("cp_a", "dex_a", "constant_product", "0x" + "a" * 40, WETH, Token("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "USDC", 6), 3000)
+    B = Pool("cp_b", "dex_b", "constant_product", "0x" + "b" * 40, WETH, Token("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "USDC", 6), 3000)
+    from mev.dex.base import get_adapter
+    ad = {"constant_product": get_adapter("constant_product")}
+    st = {"cp_a": PoolState(A, 1, reserve0=1000 * 10**18, reserve1=2400_000 * 10**6), "cp_b": PoolState(B, 1, reserve0=1000 * 10**18, reserve1=2500_000 * 10**6)}
+    (c,) = scan(st, ad)
+    s = Settings(_env_file=None, flash_lender="auto")
+    book = LenderBook(s)
+    r_aave = simulate_size(c, st, ad, 1000, Decimal("0.05"), s, None, book)          # Morpho balance unknown -> Aave 5 bp
+    book.morpho_idle["0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"] = 10**15
+    r_morpho = simulate_size(c, st, ad, 1000, Decimal("0.05"), s, None, book)
+    assert r_aave.flash_fee_usd == Decimal("0.5") and r_morpho.flash_fee_usd == 0 and r_morpho.net_usd - r_aave.net_usd == Decimal("0.5")

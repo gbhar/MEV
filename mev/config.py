@@ -76,7 +76,9 @@ class Settings(BaseSettings):
     # Live needs flash_arb_address and a signer key (Kubernetes secret mev-signer) and stops while the kill switch
     # is set: the halt file exists, execution_halt is true, or meta.execution_halt = "1".
     execution_mode: Literal["paper", "shadow", "live"] = "paper"
-    flash_lender: Literal["aave_v3", "morpho_blue"] = "aave_v3"   # morpho_blue is fee-free; the simulator still charges flash_loan_fee_bps
+    flash_lender: Literal["aave_v3", "morpho_blue", "auto"] = "auto"   # auto: Morpho Blue (0 bp) when it holds enough idle quote token, else Aave
+    lender_refresh_blocks: int = 150          # how often Morpho's idle balances are re-read (~5 min)
+    lender_morpho_headroom: int = 110         # Morpho must hold this % of the loan to be chosen
     flash_arb_address: str | None = None       # scripts/deploy_contract.py prints it
     signer_key: str | None = None              # hex private key; never logged, never written to the database
     signer_key_file: str | None = None         # alternative: path of a file holding the hex key
@@ -91,8 +93,9 @@ class Settings(BaseSettings):
 
     @property
     def flash_fee_bps(self) -> int:
-        """The flash-loan fee the configured lender actually charges: Aave V3's premium, or zero on Morpho Blue."""
-        return self.flash_loan_fee_bps if self.flash_lender == "aave_v3" else 0
+        """The flash-loan fee of a fixed lender (Aave V3's premium, zero on Morpho Blue). With flash_lender=auto the
+        per-trade fee comes from mev.execution.lenders.LenderBook; this is the conservative default used without one."""
+        return 0 if self.flash_lender == "morpho_blue" else self.flash_loan_fee_bps
 
 
 settings = Settings()
