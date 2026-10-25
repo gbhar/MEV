@@ -108,7 +108,7 @@ class ExecutionEngine:
         buy, sell = pools[c.buy_pool_id], pools[c.sell_pool_id]
         scale = Decimal(10 ** buy.quote.decimals)
         min_profit = int((r.gas_usd + Decimal(str(self.s.min_net_profit_usd))) / quote_usd * scale)
-        premium = r.amount_in * self.s.flash_loan_fee_bps // 10_000 if self.s.flash_lender == "aave_v3" else 0
+        premium = r.amount_in * self.s.flash_fee_bps // 10_000
         params = calldata.build_params(buy, sell, r.amount_in, min_profit, head_block + self.s.execution_deadline_blocks, self.s.flash_lender)
         priority = self.s.priority_fee_wei
         tx = {"chainId": 8453, "to": self.contract, "value": 0, "data": calldata.encode_execute(params), "type": 2,

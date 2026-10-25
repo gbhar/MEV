@@ -97,3 +97,10 @@ def test_gas_includes_priority_fee():
     s = Settings(_env_file=None, priority_fee_wei=1_000_000_000, l1_data_fee_usd=0.0, gas_units=100_000)
     assert gas_price_wei(0, s) == 1_000_000_000
     assert gas_cost_usd(gas_price_wei(0, s), Decimal(3000), s) == Decimal("0.3")
+
+
+def test_morpho_lender_charges_no_flash_fee():
+    from decimal import Decimal
+    from mev.config import Settings
+    aave, morpho = Settings(_env_file=None, flash_lender="aave_v3"), Settings(_env_file=None, flash_lender="morpho_blue")
+    assert aave.flash_fee_bps == 5 and morpho.flash_fee_bps == 0

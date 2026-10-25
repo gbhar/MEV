@@ -44,7 +44,7 @@ class Settings(BaseSettings):
 
     # Economics of a flash-loan arbitrage on Base
     trade_sizes_usd: list[int] = [500, 1_000, 2_500, 5_000, 10_000, 20_000, 50_000]
-    flash_loan_fee_bps: int = 5          # Aave V3 flashLoanSimple premium
+    flash_loan_fee_bps: int = 5          # Aave V3 flashLoanSimple premium; Morpho Blue charges nothing (see flash_fee_bps)
     gas_units: int = 350_000             # flash loan + two swaps, conservative
     l1_data_fee_usd: float = 0.02        # Base posts calldata to L1; small but not zero
     safety_buffer_bps: int = 2           # applied to trade size
@@ -88,6 +88,11 @@ class Settings(BaseSettings):
     live_max_daily_loss_usd: float = 20.0      # realized live loss (gas included) in the current UTC day
     live_pair_allowlist: str = "WETH/USDC,VIRTUAL/WETH,AERO/WETH"
     live_receipt_timeout_s: float = 90.0
+
+    @property
+    def flash_fee_bps(self) -> int:
+        """The flash-loan fee the configured lender actually charges: Aave V3's premium, or zero on Morpho Blue."""
+        return self.flash_loan_fee_bps if self.flash_lender == "aave_v3" else 0
 
 
 settings = Settings()
