@@ -109,7 +109,10 @@ the Python simulator's to the wei (`test_trade4_legs_match_python_simulator_to_t
 - `paper` (default): the paper trade only. No contract address or key is needed or read.
 - `shadow` (Phase 6): `mev/execution/engine.py` builds the exact `execute()` transaction, `eth_call`s it at
   head and estimates gas; profit or the decoded revert (`InsufficientProfit(got, want)`, `Expired`, ...) lands
-  in `executions` (`GET /executions`, `GET /executions/summary`). Nothing is signed. Needs `MEV_FLASH_ARB_ADDRESS`.
+  in `executions` (`GET /executions`, `GET /executions/summary`). Nothing is signed. Without
+  `MEV_FLASH_ARB_ADDRESS` it runs against a **virtual contract**: the compiled FlashArb bytecode is injected into
+  every call through a state override (`mev/execution/virtual.py`), with the signer (or a fixed dummy) as owner,
+  so Phase 6 costs nothing and needs no deployment. Aave, the pools and the tokens are the real ones.
 - `live` (Phase 7): the same simulation first, then sign and send if every cap passes: pair allowlist
   (`MEV_LIVE_PAIR_ALLOWLIST`), `MEV_LIVE_MAX_TRADE_SIZE_USD` ($1,000), `MEV_LIVE_MAX_DAILY_LOSS_USD` ($20, gas
   included) and the kill switch (`make halt` / a `HALT` file / `MEV_EXECUTION_HALT=true`). The receipt is awaited
@@ -121,6 +124,7 @@ Setup, in order (each step is a Makefile target):
 
 ```bash
 brew install foundry && make contract-build && make contract-test   # compile + fork tests
+# MEV_EXECUTION_MODE=shadow with no contract address -> virtual-contract shadow mode, free; the two steps below are for live
 make wallet            # new key -> Kubernetes secret mev-signer; prints the address. Fund it with ~0.01 ETH on Base.
 make contract-deploy   # deploys FlashArb from that key (it becomes the owner); prints MEV_FLASH_ARB_ADDRESS
 # .env: MEV_FLASH_ARB_ADDRESS=0x..., MEV_EXECUTION_MODE=shadow  ->  make k8s-secret && make k8s-apply

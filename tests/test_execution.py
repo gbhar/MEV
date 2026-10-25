@@ -97,17 +97,23 @@ class FakeEth:
         self.sent: list[bytes] = []
         self.calls: list[dict] = []
 
-    async def call(self, tx, block_identifier=None):
+    call_has_data = True   # Alchemy strips revert data from eth_call under a state override; estimate_gas keeps it
+
+    async def call(self, tx, block_identifier=None, state_override=None):
         self.calls.append(tx)
+        self.overrides = getattr(self, "overrides", []) + [state_override]
+        if self.revert is not None:
+            e = Exception("execution reverted")
+            if self.call_has_data:
+                e.data = self.revert
+            raise e
+        return self.profit.to_bytes(32, "big")
+
+    async def estimate_gas(self, tx, block_identifier=None, state_override=None):
         if self.revert is not None:
             e = Exception("execution reverted")
             e.data = self.revert
             raise e
-        return self.profit.to_bytes(32, "big")
-
-    async def estimate_gas(self, tx):
-        if self.revert is not None:
-            raise Exception("execution reverted")
         return 300_000
 
     async def get_transaction_count(self, addr, block="pending"):
@@ -178,8 +184,11 @@ def test_shadow_stores_simulation_and_never_sends():
     assert int(row.min_profit) == int((SIM.gas_usd + Decimal("1.0")) / Decimal(2300) * Decimal(10**18))
     assert w3.eth.sent == [] and row.tx_hash is None
     call = w3.eth.calls[0]
-    assert call["to"] == CONTRACT and call["data"][:4].hex() == "3ff2fc5e" and call["maxPriorityFeePerGas"] == 50_000_000
-    assert call["maxFeePerGas"] == 2 * (55_000_000 - 50_000_000) + 50_000_000
+    assert call["to"] == CONTRACT and call["data"][:4].hex() == "3ff2fc5e"
+    assert "maxFeePerGas" not in call and "nonce" not in call   # simulation runs without fee fields (unfunded sender must still see the revert)
+    tx = e.build(CAND, SIM, 101, 55_000_000, Decimal(2300)).tx
+    assert tx["maxPriorityFeePerGas"] == 50_000_000 and tx["maxFeePerGas"] == 2 * (55_000_000 - 50_000_000) + 50_000_000
+    assert tx["chainId"] == 8453 and tx["type"] == 2
 
 
 def test_shadow_decodes_contract_revert():
@@ -246,3 +255,43 @@ def test_daily_loss_cap_and_db_kill_switch():
         assert "kill switch" in e.live_blocked(CAND, SIM, 1_700_000_000, db)
         killswitch.set_halt(db, False)
         assert e.live_blocked(CAND, SIM, 1_700_000_000, db) is None
+
+
+# ---------------------------------------------------------------- virtual contract (shadow without a deployment)
+
+def test_virtual_override_patches_immutables_and_owner():
+    from mev.chain.addresses import AAVE_V3_POOL, MORPHO_BLUE
+    from mev.chain.flash_arb_code import IMMUTABLE_OFFSETS
+    from mev.execution import virtual
+    code = virtual.runtime_code()
+    for off in IMMUTABLE_OFFSETS["aave"]:
+        assert code[off:off + 32] == bytes(12) + bytes.fromhex(AAVE_V3_POOL[2:])
+    for off in IMMUTABLE_OFFSETS["morpho"]:
+        assert code[off:off + 32] == bytes(12) + bytes.fromhex(MORPHO_BLUE[2:])
+    o = virtual.state_override(OWNER := "0x05094Ba9f83D86ec5F0d8AFf8e032A0F57E36537")
+    (entry,) = o.values()
+    assert entry["code"] == "0x" + code.hex()
+    assert entry["stateDiff"]["0x" + "00" * 32] == "0x" + "00" * 12 + OWNER[2:].lower()
+
+
+def test_shadow_without_address_uses_virtual_contract_and_estimate_gas_revert_data():
+    from mev.execution import virtual
+    sel = Web3.keccak(text="InsufficientProfit(uint256,uint256)")[:4]
+    w3 = FakeW3(revert="0x" + (sel + (0).to_bytes(32, "big") + (5).to_bytes(32, "big")).hex())
+    w3.eth.call_has_data = False
+    s = Settings(_env_file=None, execution_mode="shadow", signer_key=TEST_KEY, execution_halt_file="/nonexistent/HALT")   # no flash_arb_address
+    e = ExecutionEngine(s, w3, Signer(TEST_KEY), lambda: POOLS)
+    assert e.virtual and e.contract == virtual.VIRTUAL_ADDRESS
+    asyncio.run(e.startup())
+    assert e.owner == Signer(TEST_KEY).address and e.override is not None
+    row = submit(e)
+    assert row.status == "revert" and row.revert_reason == "InsufficientProfit(0, 5)" and row.contract == virtual.VIRTUAL_ADDRESS
+    assert w3.eth.overrides[-1] is e.override and w3.eth.calls[-1]["from"] == e.owner and w3.eth.sent == []
+
+
+def test_live_never_uses_a_virtual_contract():
+    s = Settings(_env_file=None, execution_mode="live", signer_key=TEST_KEY)
+    e = ExecutionEngine(s, FakeW3(), Signer(TEST_KEY), lambda: POOLS)
+    assert not e.virtual and e.contract is None
+    with pytest.raises(RuntimeError):
+        asyncio.run(e.startup())

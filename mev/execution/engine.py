@@ -30,13 +30,14 @@ from mev.chain import abi
 from mev.config import Settings
 from mev.db.models import Execution
 from mev.db.session import session
-from mev.execution import calldata, killswitch
+from mev.execution import calldata, killswitch, virtual
 from mev.execution.signer import Signer
 from mev.pools.registry import Pool
 from mev.scanner.scanner import Candidate
 from mev.simulator.simulate import SimResult
 
 log = logging.getLogger("mev.execution")
+VIRTUAL_OWNER = "0x000000000000000000000000000000000000F1A5"   # shadow `from` when there is no signer
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,11 @@ class ExecutionEngine:
         self.tracking: set[asyncio.Task] = set()
         self.live_total = Decimal(0)
         self.owner: str | None = None   # read at startup; shadow mode eth_calls as the owner when there is no signer
+        # Shadow without a deployment: FlashArb's bytecode is injected into every eth_call (mev/execution/virtual.py)
+        self.virtual = self.mode == "shadow" and self.contract is None
+        if self.virtual:
+            self.contract = virtual.VIRTUAL_ADDRESS
+        self.override: dict | None = None
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -64,6 +70,11 @@ class ExecutionEngine:
 
     async def startup(self) -> None:
         if not self.enabled:
+            return
+        if self.virtual:
+            self.owner = self.signer.address if self.signer else VIRTUAL_OWNER
+            self.override = virtual.state_override(self.owner)
+            log.info("shadow execution against a VIRTUAL FlashArb at %s (state override, nothing deployed); owner=%s", self.contract, self.owner)
             return
         if self.contract is None:
             raise RuntimeError(f"execution_mode={self.mode} needs MEV_FLASH_ARB_ADDRESS")
@@ -156,15 +167,27 @@ class ExecutionEngine:
     # ------------------------------------------------------------------ helpers
 
     async def _simulate(self, call: dict) -> tuple[int | None, int | None, str | None]:
-        try:
-            ret, gas = await asyncio.gather(self.w3.eth.call(call, block_identifier="latest"), self.w3.eth.estimate_gas(call))
+        """(profit, gas, revert). Both calls run; a revert reason is taken from whichever carries data (Alchemy strips
+        it from eth_call under a state override but not from eth_estimateGas). Fee fields are left out: with them the
+        node checks the sender's balance first and an unfunded sender gets "insufficient funds" instead of the revert."""
+        sim = {k: v for k, v in call.items() if k in ("from", "to", "data", "value", "gas")}
+        ret, gas = await asyncio.gather(self.w3.eth.call(sim, "latest", self.override), self.w3.eth.estimate_gas(sim, "latest", self.override),
+                                        return_exceptions=True)
+        errors = [e for e in (ret, gas) if isinstance(e, BaseException)]
+        if not errors:
             return calldata.decode_profit(ret), int(gas), None
-        except Exception as e:
+        reason = None
+        for e in errors:
             data = getattr(e, "data", None)
             if isinstance(data, dict):
                 data = data.get("data")
-            reason = calldata.decode_revert(data) if data and str(data).startswith("0x") else f"{type(e).__name__}: {str(e)[:160]}"
-            return None, None, reason
+            if data and str(data).startswith("0x") and len(str(data)) > 2:
+                reason = calldata.decode_revert(data)
+                break
+        if reason is None:
+            e = errors[0]
+            reason = f"{type(e).__name__}: {str(e)[:160]}"
+        return None, None, reason
 
     async def _send(self, row_id: int, built: Built, gas: int | None, eth_price: Decimal, quote_usd: Decimal, c: Candidate) -> None:
         assert self.signer is not None
