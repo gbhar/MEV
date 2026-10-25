@@ -197,6 +197,42 @@ class Action(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utcnow)
 
 
+class Execution(Base):
+    """Phases 6/7: one row per FlashArb transaction the engine built for a risk-passed opportunity. mode=shadow rows
+    were eth_call-simulated at head and never sent; mode=live rows were signed and sent. Raw quote-token amounts
+    are strings (they exceed 64 bits)."""
+    __tablename__ = "executions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    opportunity_id: Mapped[int] = mapped_column(ForeignKey("opportunities.id"), index=True)
+    block_number: Mapped[int] = mapped_column(Integer, index=True)       # block whose state priced the trade
+    head_block: Mapped[int | None] = mapped_column(Integer)              # head when the transaction was built
+    mode: Mapped[str] = mapped_column(String(8))                         # shadow | live
+    lender: Mapped[str] = mapped_column(String(16))                      # aave_v3 | morpho_blue
+    status: Mapped[str] = mapped_column(String(16))                      # ok | revert | blocked | sent | mined | failed | error
+    contract: Mapped[str | None] = mapped_column(String(42))
+    signer: Mapped[str | None] = mapped_column(String(42))
+    quote_symbol: Mapped[str | None] = mapped_column(String(16))
+    trade_size_usd: Mapped[int] = mapped_column(Integer)
+    amount_in: Mapped[str] = mapped_column(String(80))
+    min_profit: Mapped[str] = mapped_column(String(80))                  # contract reverts below this (gas + min net, in quote units)
+    expected_profit: Mapped[str] = mapped_column(String(80))             # simulator: sell output - loan - premium
+    simulated_profit: Mapped[str | None] = mapped_column(String(80))     # eth_call at head
+    gas_estimate: Mapped[int | None] = mapped_column(Integer)
+    revert_reason: Mapped[str | None] = mapped_column(Text)
+    blocked_reason: Mapped[str | None] = mapped_column(Text)             # live cap or kill switch that stopped the send
+    tx_hash: Mapped[str | None] = mapped_column(String(66))
+    nonce: Mapped[int | None] = mapped_column(Integer)
+    gas_used: Mapped[int | None] = mapped_column(Integer)
+    effective_gas_price: Mapped[str | None] = mapped_column(String(32))
+    profit: Mapped[str | None] = mapped_column(String(80))               # Executed event, quote units
+    profit_usd: Mapped[float | None] = mapped_column(Float)
+    gas_usd: Mapped[float | None] = mapped_column(Float)
+    realized_usd: Mapped[float | None] = mapped_column(Float)            # profit_usd - gas_usd (a revert is -gas_usd)
+    latency_ms: Mapped[float | None] = mapped_column(Float)              # build + simulate (+ send) wall time
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False))
+
+
 class TokenRow(Base):
     __tablename__ = "tokens"
     address: Mapped[str] = mapped_column(String(42), primary_key=True)   # lowercase

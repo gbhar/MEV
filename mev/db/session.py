@@ -31,7 +31,8 @@ def init_db() -> None:
             row.chain_id, row.dex, row.kind, row.address, row.variant, row.pair = CHAIN_ID, p.dex, p.kind, p.address, p.variant, p.pair
             row.token0_address, row.token0_symbol, row.token0_decimals = p.token0.address, p.token0.symbol, p.token0.decimals
             row.token1_address, row.token1_symbol, row.token1_decimals = p.token1.address, p.token1.symbol, p.token1.decimals
-            row.fee_ppm, row.tick_spacing = p.fee_ppm, p.tick_spacing
+            if row.updated_at is None:   # discovery (make discover) refreshes fees from the factories; never undo that
+                row.fee_ppm, row.tick_spacing = p.fee_ppm, p.tick_spacing
             if row.source is None:
                 row.source = "bootstrap"
             if row.active is None:   # rows created before the column existed

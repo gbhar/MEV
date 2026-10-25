@@ -32,5 +32,5 @@ def test_pool_busy_and_repeat_block():
 
 
 def test_book_cannot_loosen_other_rules():
-    v = rules.check(sim(net="0.5", exact=False), 3, 1, S, rules.Book())
+    v = rules.check(sim(net="0.5", exact=False), 4, 1, S, rules.Book())   # age 3 > max_state_age_blocks (2)
     assert len(v) == 3 and v[0].startswith("net_profit") and "stale" in v[1] and "not exact" in v[2]

@@ -21,6 +21,7 @@ spec:
           command: ["python", "-m", "mev.main"]
           envFrom:
             - secretRef: { name: mev-env, optional: true }     # make k8s-secret (webhook, LLM key, RPC override)
+            - secretRef: { name: mev-signer, optional: true }  # make wallet: MEV_SIGNER_KEY for shadow/live execution
           env:
             - { name: PGUSER, valueFrom: { secretKeyRef: { name: mev-postgres-app, key: username } } }
             - { name: PGPASSWORD, valueFrom: { secretKeyRef: { name: mev-postgres-app, key: password } } }

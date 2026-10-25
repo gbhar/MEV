@@ -1,0 +1,19 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+solc_version = "0.8.26"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 2000
+via_ir = false
+fs_permissions = []
+
+# Fork tests read the RPC URL from the environment (MEV_RPC_HTTP); the key is never written to disk here.
+[rpc_endpoints]
+base = "${MEV_RPC_HTTP}"
+
+[fmt]
+line_length = 120

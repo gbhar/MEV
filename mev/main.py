@@ -27,6 +27,8 @@ from mev.features import compute as features
 from mev.indexer import events as indexer
 from mev.db.session import init_db, load_active_pools, session
 from mev.dex.base import get_adapter
+from mev.execution.engine import ExecutionEngine
+from mev.execution.signer import load_signer
 from mev.paper.executor import PaperExecutor
 from mev.pools import state as pool_state
 from mev.pools.prices import usd_prices
@@ -43,6 +45,9 @@ _last_states: dict[str, PoolState] = {}
 _fetched_now: set[str] = set()      # pools whose state was fetched (not carried forward) in the current block
 _last_full_snapshot: int = 0
 _rr: int = 0                        # round-robin cursor for tick-window refreshes
+_behind: bool = False               # the loop had to skip blocks to reach this one: no optional RPC work
+_head_at_fetch: int | None = None   # chain head read concurrently with the pool-state fetch (saves a round trip)
+ENGINE: ExecutionEngine | None = None   # shadow/live execution; None in paper mode
 
 
 def reload_pools() -> None:
@@ -104,17 +109,24 @@ async def fetch_all(w3, block_number: int, partial_ok: bool) -> tuple[dict, dict
     else:
         changed = {e.pool_id for e in events}
         # tick windows change only on Mint/Burn; refresh those plus a round-robin slice so every pool is rebuilt regularly
-        n = settings.tick_refresh_pools_per_block
+        n = 0 if _behind else settings.tick_refresh_pools_per_block   # optional work waits until we are caught up
         rr = [POOLS[(_rr + i) % len(POOLS)].pool_id for i in range(min(n, len(POOLS)))] if POOLS else []
         _rr = (_rr + n) % max(len(POOLS), 1)
         refresh = {e.pool_id for e in events if e.event_type in ("mint", "burn")} | set(rr)
         targets = [p for p in POOLS if p.pool_id in changed or p.pool_id in refresh]
         carried = pool_state.carry_forward({k: v for k, v in _last_states.items() if k not in changed and k not in refresh}, block_number)
+    global _head_at_fetch
+    head_task = asyncio.ensure_future(w3.eth.block_number)
     try:
         fetched = await pool_state.fetch_states(w3, targets, block_number, refresh) if targets else {}
     except Exception:
         metrics.rpc_errors.inc()
+        head_task.cancel()
         raise
+    try:
+        _head_at_fetch = await head_task
+    except Exception:
+        _head_at_fetch = None
     states = {**carried, **fetched}
     for p in POOLS:
         if p.pool_id not in states:
@@ -198,8 +210,8 @@ async def process_block(w3, block_number: int, adapters, paper: PaperExecutor, *
     features.note_candidates(block_number, pairs)
     metrics.opportunities_detected.inc(len(candidates))
     if candidates:
-        # re-read the head so the stale-state rule sees how old the states really are (in replay: the block itself)
-        head_now = block_number if replay else await w3.eth.block_number
+        # the head read during the state fetch tells the stale-state rule how old the states really are (in replay: the block itself)
+        head_now = block_number if replay else (_head_at_fetch if _head_at_fetch is not None else await w3.eth.block_number)
         daily_loss, failed = paper.book(ts)
     ctx = features.BlockContext(block_number, ts, gas_usd, latency_ms, 0.0 if replay else time.time(), prices)
     sims = []
@@ -236,8 +248,13 @@ async def process_block(w3, block_number: int, adapters, paper: PaperExecutor, *
             if not violations:
                 paper.open(db, opp.id, c, b.trade_size_usd, b.net_usd)
             db.commit()
+            opp_id = opp.id
         if not violations:
             opened[c.buy_pool_id] = opened[c.sell_pool_id] = b.trade_size_usd
+            if ENGINE is not None and ENGINE.enabled and not replay:
+                quote_key = states[c.buy_pool_id].pool.quote.key
+                await ENGINE.submit(opp_id, c, b, head_block=head_now, block_ts=ts, gas_price_wei=gas_price_wei(next_fee, settings),
+                                    eth_price=eth_price, quote_usd=prices.get(quote_key, Decimal(1)))
 
         metrics.simulations.inc(len(results))
         metrics.profitable_simulations.inc(sum(1 for r in results if r.net_usd > 0))
@@ -266,7 +283,7 @@ async def process_with_retries(w3, block_number: int, adapters, paper: PaperExec
             return True
         except Exception as e:
             if rpc.is_throttle(e) or rpc.is_throttle(getattr(e, "__cause__", None) or e):
-                log.warning("block %s attempt %d/%d throttled by %s (%s)", block_number, attempt, settings.block_retries, rpc.current(w3), short_error(e))
+                log.warning("block %s attempt %d/%d throttled by %s (%s)", block_number, attempt, settings.block_retries, rpc.redacted(rpc.current(w3)), short_error(e))
                 rpc.rotate(w3)
             else:
                 log.exception("block %s attempt %d/%d failed", block_number, attempt, settings.block_retries)
@@ -298,8 +315,11 @@ async def run(max_blocks: int | None) -> None:
     w3 = make_web3()
     adapters = {k: get_adapter(k) for k in ("uniswap_v3", "constant_product")}
     paper = PaperExecutor(settings, adapters)
-    log.info("chain_id=%s rpc=%s (+%d fallbacks) pools=%d pairs=%d metrics=:%d", await w3.eth.chain_id, rpc.current(w3), len(rpc.endpoints()) - 1, len(POOLS),
-             len({p.pair for p in POOLS}), settings.metrics_port)
+    global ENGINE
+    ENGINE = ExecutionEngine(settings, w3, load_signer(settings), lambda: {p.pool_id: p for p in POOLS})
+    await ENGINE.startup()
+    log.info("chain_id=%s rpc=%s (+%d fallbacks) pools=%d pairs=%d metrics=:%d execution=%s", await w3.eth.chain_id, rpc.redacted(rpc.current(w3)), len(rpc.endpoints()) - 1, len(POOLS),
+             len({p.pair for p in POOLS}), settings.metrics_port, settings.execution_mode)
 
     last: int | None = None
     done = 0
@@ -313,7 +333,18 @@ async def run(max_blocks: int | None) -> None:
         if head <= last:   # nothing new, or a lagging replica / reorg answered with an older head
             await asyncio.sleep(settings.poll_interval_s)
             continue
-        if head - last > settings.max_catchup_blocks:
+        global _behind
+        _behind = False
+        if settings.chase_head and head - last > 1:
+            # Every backlog block would be stale by the time it is processed (one block costs several RPC round
+            # trips), so go straight to the newest block and let the dataset record the gap.
+            skipped = head - 1 - last
+            metrics.blocks_skipped.inc(skipped)
+            _behind = True
+            log.info("behind by %d: jumping to head %s, skipping %s..%s", head - last, head, last + 1, head - 1)
+            paper.note_gap()
+            last = head - 1
+        elif head - last > settings.max_catchup_blocks:
             skipped = head - settings.max_catchup_blocks - last
             metrics.blocks_skipped.inc(skipped)
             log.warning("gap: %d blocks behind head %s, skipping %s..%s", head - last, head, last + 1, head - settings.max_catchup_blocks)
@@ -341,6 +372,8 @@ async def run(max_blocks: int | None) -> None:
         await process_with_retries(w3, last + 1, adapters, paper, resolve_only=True)
         if paper.pending:
             log.warning("paper trades still unresolved (resolved on the next start): %s", [p.trade_id for p in paper.pending])
+    if ENGINE is not None:
+        await ENGINE.drain()
 
 
 def main() -> None:

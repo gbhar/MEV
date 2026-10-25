@@ -28,6 +28,7 @@ UNISWAP_V2_FACTORY = "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6"
 BASESWAP_V2_FACTORY = "0xFDa619b6d20975be80A10332cD39b9a4b0FAa8BB"
 SUSHI_V2_FACTORY = "0x71524B4f93c58fcbF659783284E38825f0622859"
 AAVE_V3_POOL = "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5"
+MORPHO_BLUE = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"   # fee-free flash loans; placeholder lender in FlashArb
 MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11"
 
 QUOTERS = {"uniswap": UNISWAP_V3_QUOTER_V2, "pancake": PANCAKE_V3_QUOTER_V2, "slipstream": AERODROME_CL_QUOTER_V2}
@@ -90,10 +91,10 @@ POOLS: list[Pool] = [
     _v3("aerodrome_cl", "slipstream", "aerocl_usdc_aero_2000", "0xBE00fF35AF70E8415D0eB605a286D8A45466A4c1", USDC, AERO, 10000, 2000),
     _v3("uniswap_v3", "uniswap", "univ3_usdc_aero_5", "0xE5B5f522E98B5a2baAe212d4dA66b865B781DB97", USDC, AERO, 500, 10),
     _v3("aerodrome_cl", "slipstream", "aerocl_weth_aero_200", "0x82321f3BEB69f503380D6B233857d5C43562e2D0", WETH, AERO, 3076, 200),
-    _cp("aerodrome", "aerodrome", "aero_weth_aero_v", "0x7f670f78B17dEC44d5Ef68a48740b6f8849cc2e6", WETH, AERO, 3000),
+    _cp("aerodrome", "aerodrome", "aero_weth_aero_v", "0x7f670f78B17dEC44d5Ef68a48740b6f8849cc2e6", WETH, AERO, 10000),   # factory getFee = 100 bp,
     _v3("pancake_v3", "pancake", "pcs3_weth_aero_5", "0x20CB8f872ae894F7c9e32e621C186e5AFCe82Fd0", WETH, AERO, 500, 10),
     _v3("uniswap_v3", "uniswap", "univ3_virtual_weth_5", "0x9c087Eb773291e50CF6c6a90ef0F4500e349B903", VIRTUAL, WETH, 500, 10),
     _v3("aerodrome_cl", "slipstream", "aerocl_virtual_weth_200", "0xC200F21EfE67c7F41B81A854c26F9cdA80593065", VIRTUAL, WETH, 600, 200),
-    _cp("aerodrome", "aerodrome", "aero_virtual_weth_v", "0x21594b992F68495dD28d605834b58889d0a727c7", VIRTUAL, WETH, 3000),
+    _cp("aerodrome", "aerodrome", "aero_virtual_weth_v", "0x21594b992F68495dD28d605834b58889d0a727c7", VIRTUAL, WETH, 10000),   # factory getFee = 100 bp,
     _cp("uniswap_v2", "v2", "univ2_virtual_weth", "0xE31c372a7Af875b3B5E0F3713B17ef51556da667", VIRTUAL, WETH, 3000),
 ]

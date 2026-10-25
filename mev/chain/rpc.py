@@ -30,6 +30,14 @@ def current(w3: AsyncWeb3) -> str:
     return str(w3.provider.endpoint_uri)
 
 
+def redacted(url: str) -> str:
+    """Host only: provider URLs carry the API key in the path and must not reach the logs."""
+    try:
+        return url.split("//", 1)[1].split("/", 1)[0]
+    except IndexError:
+        return "rpc"
+
+
 def rotate(w3: AsyncWeb3) -> str:
     """Point the live client at the next endpoint (web3's HTTP provider reads endpoint_uri per request)."""
     global _index
@@ -38,7 +46,7 @@ def rotate(w3: AsyncWeb3) -> str:
         return current(w3)
     _index = (eps.index(current(w3)) + 1) % len(eps) if current(w3) in eps else 0
     w3.provider.endpoint_uri = eps[_index]
-    log.warning("rpc endpoint rotated to %s", eps[_index])
+    log.warning("rpc endpoint rotated to %s", redacted(eps[_index]))
     return eps[_index]
 
 

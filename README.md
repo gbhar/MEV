@@ -1,19 +1,20 @@
-# MEV platform — V1 (paper trading on Base)
+# MEV platform — V1 (paper, shadow and restricted live execution on Base)
 
 Simulation-first cross-DEX arbitrage scanner and paper trader. It reads Base mainnet, finds WETH/USDC
 price gaps between Uniswap V3 and constant-product pools (Aerodrome, Uniswap V2), simulates a
 flash-loan round trip at several sizes with exact AMM math, applies deterministic risk rules, records
 paper trades and what happened one block later, and stores a feature vector per opportunity for the
-models that come next. Nothing is ever signed or broadcast and no private key exists anywhere.
+models that come next. By default nothing is signed or broadcast and no private key exists anywhere; the
+execution layer (`contracts/`, `mev/execution/`, spec Phases 5-7) is off until `MEV_EXECUTION_MODE` is set.
 
 Spec: `~/Documents/MEV.docx`. This implements sections 36 steps 1–8 (connectivity through the feature
 pipeline) plus the read API, historical replay and the monitoring stack.
 
 ## Do I need any coins?
 
-No. V1 only reads the chain through a free RPC. Coins are needed only in Phase 7 (restricted live
-execution): a little ETH on Base for gas. The trade capital comes from the flash loan and is repaid in
-the same transaction.
+Not for paper or shadow mode: both only read the chain. Live execution needs a little ETH on Base for gas in
+the signer wallet (`make wallet`) and one deployment transaction. The trade capital comes from the flash loan
+and is repaid in the same transaction.
 
 ## Run
 
@@ -90,14 +91,52 @@ finds something: a risk-passed opportunity, or a blocked candidate whose best ne
    (`actions.kind = lifetime`). That is the competition label the spec's MEV model needs;
 4. writes every step to the `actions` table (`GET /actions`, and inside `GET /opportunities/{id}`).
 
-It never signs or sends anything. Live execution (spec Phase 7) needs the flash-loan contract, a
-deployment, ETH for gas and a signer, none of which exist here.
+It never signs or sends anything; execution lives in the loop process (next section).
+
+## Execution (`contracts/`, `mev/execution/`) — spec Phases 5-7
+
+`contracts/src/FlashArb.sol` is the spec's intentionally simple contract: owner-only `execute()` borrows the
+quote token (Aave V3 `flashLoanSimple`, 5 bp; Morpho Blue, fee-free, selectable per call), buys the base on
+pool A, sells it on pool B and reverts unless the owner receives at least `minProfit`; the surplus is swept
+in the same transaction. Legs cover every venue the scanner watches: Uniswap V3 / SushiSwap V3 / Aerodrome
+Slipstream (`uniswapV3SwapCallback`), PancakeSwap V3 (`pancakeV3SwapCallback`), Uniswap V2 pairs and
+Aerodrome volatile pairs. Pausable, with `rescue()` and a per-call deadline block. `make contract-test` runs
+the Foundry fork tests against Base at the blocks of the first paper trades: the on-chain leg outputs equal
+the Python simulator's to the wei (`test_trade4_legs_match_python_simulator_to_the_wei`).
+
+`MEV_EXECUTION_MODE` selects what the loop does with a risk-passed opportunity:
+
+- `paper` (default): the paper trade only. No contract address or key is needed or read.
+- `shadow` (Phase 6): `mev/execution/engine.py` builds the exact `execute()` transaction, `eth_call`s it at
+  head and estimates gas; profit or the decoded revert (`InsufficientProfit(got, want)`, `Expired`, ...) lands
+  in `executions` (`GET /executions`, `GET /executions/summary`). Nothing is signed. Needs `MEV_FLASH_ARB_ADDRESS`.
+- `live` (Phase 7): the same simulation first, then sign and send if every cap passes: pair allowlist
+  (`MEV_LIVE_PAIR_ALLOWLIST`), `MEV_LIVE_MAX_TRADE_SIZE_USD` ($1,000), `MEV_LIVE_MAX_DAILY_LOSS_USD` ($20, gas
+  included) and the kill switch (`make halt` / a `HALT` file / `MEV_EXECUTION_HALT=true`). The receipt is awaited
+  in the background; the `Executed` event gives the booked profit, the receipt the gas, `realized_usd` the
+  difference. `minProfit` is set to the gas estimate plus `min_net_profit_usd`, so a mined transaction nets at
+  least the configured minimum or costs only its gas.
+
+Setup, in order (each step is a Makefile target):
+
+```bash
+brew install foundry && make contract-build && make contract-test   # compile + fork tests
+make wallet            # new key -> Kubernetes secret mev-signer; prints the address. Fund it with ~0.01 ETH on Base.
+make contract-deploy   # deploys FlashArb from that key (it becomes the owner); prints MEV_FLASH_ARB_ADDRESS
+# .env: MEV_FLASH_ARB_ADDRESS=0x..., MEV_EXECUTION_MODE=shadow  ->  make k8s-secret && make k8s-apply
+# after days of shadow data (/executions/summary): MEV_EXECUTION_MODE=live, make k8s-secret, restart the loop
+```
+
+The key is generated on the laptop and piped straight into the secret; it is never printed, logged, committed
+or stored in the database (`mev/execution/signer.py` exposes the address only). The loop mounts the secret as
+`MEV_SIGNER_KEY`; the API and the agent never see it.
 
 ## API (`mev/api/app.py`)
 
 `GET /health`, `GET /opportunities` (filters: dex, pair, min_profit, risk_passed, from_block, to_block),
 `GET /opportunities/{id}` (candidate, market state, simulations, features, risk decision, paper trade),
-`GET /pnl` (gross, fees, gas, net, win rate, max drawdown, execution loss), `GET /actions`, `POST /simulate`
+`GET /pnl` (gross, fees, gas, net, win rate, max drawdown, execution loss, plus a `live` block), `GET /actions`,
+`GET /executions` (filters: mode, status, pair, opportunity_id), `GET /executions/summary`, `POST /simulate`
 (`pool_buy`, `pool_sell`, `trade_size_usd`, optional `block_number`; runs against stored snapshots,
 which hold no V3 tick window, so a tick-crossing V3 leg is reported `exact=false`).
 
@@ -151,8 +190,8 @@ The API is also published through the cluster's Traefik at http://mev.141.148.21
 auth (`infrastructure/kubernetes/ingress.yaml`; the users secret `mev-api-basicauth` is created by hand).
 
 The loop's metrics are scraped by the cluster Prometheus through the ServiceMonitor; the dashboard
-JSON is shipped as a sidecar ConfigMap and can also be imported by hand. No execution engine and no
-wallet secret exist in the namespace, as spec section 28 requires.
+JSON is shipped as a sidecar ConfigMap and can also be imported by hand. The signer secret `mev-signer`
+(`make wallet`) is mounted into the loop only, and only matters when `MEV_EXECUTION_MODE` is shadow or live.
 
 ## Known limitations (deliberate for V1)
 
@@ -161,6 +200,12 @@ wallet secret exist in the namespace, as spec section 28 requires.
   sequencer. The MEV-competition model in the spec is meant to correct for it.
 - A V3 quote that would leave the fetched ±300-tick window is marked inexact and blocked (far larger
   than any size in the grid moves these pools).
+- Pool fees come from the registry. Aerodrome volatile pools have per-pool fees (AERO/WETH and VIRTUAL/WETH
+  charge 1%, the others 0.3%); `make discover` reads them from the factory and startup seeding no longer
+  overwrites them. Before 2026-10-25 those two were registered at 0.3%, which made every VIRTUAL/WETH and
+  AERO/WETH candidate look ~0.7% better than it was; the six paper trades of 2026-10-24 were phantom.
+- The loop needs several RPC round trips per block (~250-400 ms each from Mumbai to Alchemy). When it falls
+  behind it jumps to head (`chase_head`) and counts the skipped blocks instead of processing a stale backlog.
 - Pools are compared only when their token0/token1 ordering matches (true for the V1 set).
 - Logs are fetched per block over HTTP; the public Base WebSocket endpoint refused connections
   (2026-10-24). With a provider that offers WSS, set `MEV_RPC_WS` and add a subscription path.

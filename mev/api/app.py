@@ -1,4 +1,5 @@
-"""Read-only HTTP API over the paper-trading database (spec section 26). Nothing here can trade.
+"""Read-only HTTP API over the platform database (spec section 26). Nothing here can trade: the execution engine
+lives in the loop process and this API only reports what it did (`/executions`).
 Run: make api  (uvicorn mev.api.app:app --port 8000)"""
 from decimal import Decimal
 
@@ -9,7 +10,7 @@ from sqlalchemy import func, select
 from mev.config import settings
 import json
 
-from mev.db.models import Action, Feature, Opportunity, PaperTrade, PoolRow, PoolSnapshot, Simulation
+from mev.db.models import Action, Execution, Feature, Opportunity, PaperTrade, PoolRow, PoolSnapshot, Simulation
 from mev.db.session import init_db, load_active_pools, session
 from mev.dex.base import get_adapter
 from mev.pools.prices import usd_prices
@@ -38,7 +39,8 @@ def health() -> dict:
     with session() as db:
         last = db.scalar(select(func.max(Opportunity.block_number)))
         snap = db.scalar(select(func.max(PoolSnapshot.block_number)))
-    return {"status": "healthy", "last_snapshot_block": snap, "last_opportunity_block": last, "execution": "paper-only"}
+    return {"status": "healthy", "last_snapshot_block": snap, "last_opportunity_block": last, "execution": settings.execution_mode,
+            "flash_arb": settings.flash_arb_address}
 
 
 @app.get("/pools")
@@ -91,6 +93,7 @@ def opportunity(opportunity_id: int) -> dict:
         sims = db.scalars(select(Simulation).where(Simulation.opportunity_id == o.id).order_by(Simulation.trade_size_usd)).all()
         feat = db.scalar(select(Feature).where(Feature.opportunity_id == o.id))
         trade = db.scalar(select(PaperTrade).where(PaperTrade.opportunity_id == o.id))
+        execs = db.scalars(select(Execution).where(Execution.opportunity_id == o.id).order_by(Execution.id)).all()
         actions = db.scalars(select(Action).where(Action.opportunity_id == o.id).order_by(Action.id)).all()
         snaps = db.scalars(select(PoolSnapshot).where(PoolSnapshot.block_number == o.block_number,
                                                       PoolSnapshot.pool_id.in_([o.buy_pool_id, o.sell_pool_id]))).all()
@@ -98,6 +101,7 @@ def opportunity(opportunity_id: int) -> dict:
             "features": row(feat) if feat else None, "ai_predictions": None,   # models run in shadow mode later
             "risk_decision": {"passed": o.risk_passed, "violations": o.risk_violations},
             "paper_trade": row(trade) if trade else None,
+            "executions": [row(e) for e in execs],
             "actions": [action_row(a) for a in actions]}
 
 
@@ -126,7 +130,15 @@ def actions(kind: str | None = None, opportunity_id: int | None = None, limit: i
 def pnl() -> dict:
     with session() as db:
         trades = db.scalars(select(PaperTrade).where(PaperTrade.resolved_block.is_not(None)).order_by(PaperTrade.resolved_block, PaperTrade.id)).all()
-        sims = {s.opportunity_id: s for s in db.scalars(select(Simulation))} if trades else {}
+        # only the simulations of the traded size for the traded opportunities (the table holds one row per grid size per candidate)
+        sims = {}
+        if trades:
+            pairs = {(t.opportunity_id, t.trade_size_usd) for t in trades}
+            for s_ in db.scalars(select(Simulation).where(Simulation.opportunity_id.in_([o for o, _ in pairs]))):
+                if (s_.opportunity_id, s_.trade_size_usd) in pairs:
+                    sims[s_.opportunity_id] = s_
+        live = db.execute(select(func.count(Execution.id), func.sum(Execution.realized_usd), func.sum(Execution.gas_usd),
+                                 func.sum(Execution.profit_usd)).where(Execution.mode == "live", Execution.status.in_(["mined", "failed"]))).one()
     gross = sum(t.actual_gross_usd or 0.0 for t in trades)
     gas = sum(t.actual_gas_usd or 0.0 for t in trades)
     net = sum(t.realized_net_usd or 0.0 for t in trades)
@@ -140,7 +152,36 @@ def pnl() -> dict:
     return {"trades": len(trades), "gross_profit": gross, "fees": flash, "gas": gas, "net_profit": net,
             "win_rate": wins / len(trades) if trades else None, "max_drawdown": drawdown,
             "expected_net_total": sum(t.expected_net_usd for t in trades),
-            "execution_loss_total": sum(t.execution_loss_usd or 0.0 for t in trades)}
+            "execution_loss_total": sum(t.execution_loss_usd or 0.0 for t in trades),
+            "live": {"transactions": live[0], "realized_net_usd": live[1] or 0.0, "gas_usd": live[2] or 0.0, "gross_profit_usd": live[3] or 0.0}}
+
+
+@app.get("/executions")
+def executions(mode: str | None = None, status: str | None = None, pair: str | None = None, opportunity_id: int | None = None,
+               limit: int = Query(100, le=1000)) -> list[dict]:
+    """What the execution engine did (Phases 6/7): mode shadow = built and eth_call-simulated, never sent;
+    mode live = signed and sent. status: ok | revert | blocked | sent | mined | failed | error."""
+    q = select(Execution, Opportunity.pair).join(Opportunity, Execution.opportunity_id == Opportunity.id).order_by(Execution.id.desc()).limit(limit)
+    if mode:
+        q = q.where(Execution.mode == mode)
+    if status:
+        q = q.where(Execution.status == status)
+    if pair:
+        q = q.where(Opportunity.pair == pair)
+    if opportunity_id is not None:
+        q = q.where(Execution.opportunity_id == opportunity_id)
+    with session() as db:
+        return [{**row(e), "pair": pr} for e, pr in db.execute(q)]
+
+
+@app.get("/executions/summary")
+def executions_summary() -> list[dict]:
+    """Counts and totals per mode and status: the shadow-mode scorecard (would it have succeeded, expected vs simulated)."""
+    with session() as db:
+        rows = db.execute(select(Execution.mode, Execution.status, func.count(Execution.id), func.sum(Execution.realized_usd),
+                                 func.avg(Execution.latency_ms), func.avg(Execution.gas_estimate))
+                          .group_by(Execution.mode, Execution.status).order_by(Execution.mode, Execution.status)).all()
+    return [{"mode": m, "status": st, "count": n, "realized_usd": r or 0.0, "avg_latency_ms": lat, "avg_gas_estimate": g} for m, st, n, r, lat, g in rows]
 
 
 class SimulateRequest(BaseModel):

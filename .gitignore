@@ -6,3 +6,8 @@ __pycache__/
 *.csv
 *.egg-info/
 .pytest_cache/
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+HALT
+*.key

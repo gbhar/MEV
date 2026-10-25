@@ -23,3 +23,6 @@ scanner_latency = Histogram("scanner_latency_seconds", "scan() wall time per blo
 simulation_latency = Histogram("simulation_latency_seconds", "simulate() wall time per candidate")
 feature_latency = Histogram("feature_latency_seconds", "feature vector computation per opportunity")
 pools_refetched = Histogram("pools_refetched_per_block", "Pools whose state was fetched (not carried forward) per block", buckets=(0, 1, 2, 5, 10, 20, 50, 100))
+executions = Counter("executions_total", "FlashArb transactions built by the execution engine", ["mode", "status"])
+live_profit_usd = Gauge("live_profit_usd", "Cumulative realized live net profit (USD), sum of executions.realized_usd where mode=live")
+execution_latency = Histogram("execution_latency_seconds", "Build + eth_call (+ send) wall time per execution")

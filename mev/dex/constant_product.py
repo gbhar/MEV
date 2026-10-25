@@ -7,9 +7,14 @@ from mev.pools.state import PoolState
 PPM = 1_000_000
 
 
-def get_amount_out(amount_in: int, reserve_in: int, reserve_out: int, fee_ppm: int) -> int:
+def get_amount_out(amount_in: int, reserve_in: int, reserve_out: int, fee_ppm: int, variant: str = "v2") -> int:
+    """Uniswap V2 rounding by default; Aerodrome/Velodrome deduct the fee from the input first and then apply
+    x*y=k (Pool._getAmountOut), which differs by a few wei on large outputs."""
     if amount_in <= 0 or reserve_in <= 0 or reserve_out <= 0:
         return 0
+    if variant == "aerodrome":
+        amount_in -= amount_in * fee_ppm // PPM
+        return amount_in * reserve_out // (reserve_in + amount_in)
     amount_in_with_fee = amount_in * (PPM - fee_ppm)
     return amount_in_with_fee * reserve_out // (reserve_in * PPM + amount_in_with_fee)
 
@@ -25,7 +30,7 @@ class ConstantProductAdapter:
         p = state.pool
         assert state.reserve0 is not None and state.reserve1 is not None
         if token_in.lower() == p.token0.address.lower():
-            out = get_amount_out(amount_in, state.reserve0, state.reserve1, p.fee_ppm)
+            out = get_amount_out(amount_in, state.reserve0, state.reserve1, p.fee_ppm, p.variant)
         else:
-            out = get_amount_out(amount_in, state.reserve1, state.reserve0, p.fee_ppm)
+            out = get_amount_out(amount_in, state.reserve1, state.reserve0, p.fee_ppm, p.variant)
         return Quote(out, exact=True)

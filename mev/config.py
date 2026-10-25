@@ -1,17 +1,22 @@
 """Runtime settings. Every value can be overridden with an MEV_-prefixed env var or a .env file."""
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="MEV_", extra="ignore")
 
-    # Chain access (read-only in V1; no signer anywhere)
+    # Chain access. Read-only unless execution_mode is live (see the Execution block below).
     rpc_http: str = "https://base-rpc.publicnode.com"   # mainnet.base.org allows 5 req/s and 429s eth_getLogs under load
     rpc_http_fallbacks: str = "https://base.drpc.org,https://1rpc.io/base,https://mainnet.base.org"   # rotated to on 403/429
     rpc_ws: str | None = None
     poll_interval_s: float = 0.5
     rpc_timeout_s: float = 5.0           # one stuck request must not cost tens of 2 s blocks
-    max_catchup_blocks: int = 5          # process every block in order up to this many behind head
+    max_catchup_blocks: int = 5          # process every block in order up to this many behind head (chase_head off)
+    chase_head: bool = True              # when behind by more than one block, jump to the newest block; the skipped
+                                         # blocks are counted in blocks_skipped_total. A backlog block is stale by the
+                                         # time it is processed, so working through it only produces blocked candidates.
     block_retries: int = 3               # attempts per block before it is skipped (lagging replica, 429, ...)
     resolve_retries: int = 3             # attempts per pending paper trade before it is dropped from memory
 
@@ -62,9 +67,27 @@ class Settings(BaseSettings):
     min_net_profit_usd: float = 1.0      # the doc's $25 is a mainnet number; Base margins are smaller
     max_trade_size_usd: int = 25_000
     max_gas_usd: float = 5.0
-    max_state_age_blocks: int = 1
+    max_state_age_blocks: int = 2        # a transaction sent at head lands in head+1 or head+2 anyway
     max_daily_loss_usd: float = 500.0    # realized paper loss in the current UTC day (block time)
     max_failed_trades: int = 5           # consecutive resolutions that were no longer profitable
+
+    # Execution (spec Phases 5-7). paper: no transaction exists. shadow: the exact FlashArb transaction is built
+    # and eth_call-simulated at head, never sent (Phase 6). live: signed and sent under the caps below (Phase 7).
+    # Live needs flash_arb_address and a signer key (Kubernetes secret mev-signer) and stops while the kill switch
+    # is set: the halt file exists, execution_halt is true, or meta.execution_halt = "1".
+    execution_mode: Literal["paper", "shadow", "live"] = "paper"
+    flash_lender: Literal["aave_v3", "morpho_blue"] = "aave_v3"   # morpho_blue is fee-free; the simulator still charges flash_loan_fee_bps
+    flash_arb_address: str | None = None       # scripts/deploy_contract.py prints it
+    signer_key: str | None = None              # hex private key; never logged, never written to the database
+    signer_key_file: str | None = None         # alternative: path of a file holding the hex key
+    execution_deadline_blocks: int = 2         # the transaction reverts if included later than head + this
+    execution_gas_limit: int = 450_000
+    execution_halt: bool = False
+    execution_halt_file: str = "HALT"
+    live_max_trade_size_usd: int = 1_000
+    live_max_daily_loss_usd: float = 20.0      # realized live loss (gas included) in the current UTC day
+    live_pair_allowlist: str = "WETH/USDC,VIRTUAL/WETH,AERO/WETH"
+    live_receipt_timeout_s: float = 90.0
 
 
 settings = Settings()

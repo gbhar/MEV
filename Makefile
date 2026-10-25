@@ -39,6 +39,26 @@ discover:          # refresh the pools table (allowlisted tokens x factories); a
 agent:
 	$(PY) -m mev.agent
 
+# Execution (spec Phases 5-7): contract, wallet, deployment. Live sends need all three plus MEV_EXECUTION_MODE=live.
+contract-build:    # needs Foundry (brew install foundry)
+	cd contracts && forge build
+contract-test:     # fork tests against Base at the paper-trade blocks; MEV_RPC_HTTP must be an archive endpoint
+	cd contracts && set -a && . ../.env && set +a && forge test -vv
+contract-abi:      # regenerate mev/chain/abi.py's FLASH_ARB after changing the contract
+	$(PY) scripts/gen_abi.py
+wallet:            # new signer key -> Kubernetes secret mev-signer; prints the address to fund
+	$(PY) scripts/wallet.py create
+wallet-address:
+	$(PY) scripts/wallet.py address
+wallet-balance:
+	$(PY) scripts/wallet.py balance
+contract-deploy:   # deploy FlashArb with the signer; then put the printed address in .env as MEV_FLASH_ARB_ADDRESS
+	$(PY) scripts/deploy_contract.py
+halt:              # kill switch: stop live sends (clear with `make resume`)
+	$(PY) -m mev.execution.killswitch on manual
+resume:
+	$(PY) -m mev.execution.killswitch off
+
 # Kubernetes (kubectl context: prodaiq-oke-test, namespace mev-platform)
 K8S_NS=mev-platform
 k8s-apply:

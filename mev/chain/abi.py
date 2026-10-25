@@ -62,3 +62,350 @@ MULTICALL3 = [
      "outputs": [{"name": "returnData", "type": "tuple[]", "components": [
          {"name": "success", "type": "bool"}, {"name": "returnData", "type": "bytes"}]}]},
 ]
+
+# FlashArb (contracts/src/FlashArb.sol): the execution contract. Generated from the forge artifact; regenerate with
+# `make contract-abi` after changing the contract.
+FLASH_ARB = [
+ {
+  "type": "function",
+  "name": "aave",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address",
+    "internalType": "contract IAaveV3Pool"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "execute",
+  "inputs": [
+   {
+    "name": "p",
+    "type": "tuple",
+    "internalType": "struct FlashArb.Params",
+    "components": [
+     {
+      "name": "lender",
+      "type": "uint8",
+      "internalType": "enum FlashArb.Lender"
+     },
+     {
+      "name": "quote",
+      "type": "address",
+      "internalType": "address"
+     },
+     {
+      "name": "amount",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "buy",
+      "type": "tuple",
+      "internalType": "struct FlashArb.Leg",
+      "components": [
+       {
+        "name": "pool",
+        "type": "address",
+        "internalType": "address"
+       },
+       {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "enum FlashArb.Kind"
+       },
+       {
+        "name": "tokenIn",
+        "type": "address",
+        "internalType": "address"
+       },
+       {
+        "name": "tokenOut",
+        "type": "address",
+        "internalType": "address"
+       },
+       {
+        "name": "feePpm",
+        "type": "uint24",
+        "internalType": "uint24"
+       }
+      ]
+     },
+     {
+      "name": "sell",
+      "type": "tuple",
+      "internalType": "struct FlashArb.Leg",
+      "components": [
+       {
+        "name": "pool",
+        "type": "address",
+        "internalType": "address"
+       },
+       {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "enum FlashArb.Kind"
+       },
+       {
+        "name": "tokenIn",
+        "type": "address",
+        "internalType": "address"
+       },
+       {
+        "name": "tokenOut",
+        "type": "address",
+        "internalType": "address"
+       },
+       {
+        "name": "feePpm",
+        "type": "uint24",
+        "internalType": "uint24"
+       }
+      ]
+     },
+     {
+      "name": "minProfit",
+      "type": "uint256",
+      "internalType": "uint256"
+     },
+     {
+      "name": "deadlineBlock",
+      "type": "uint256",
+      "internalType": "uint256"
+     }
+    ]
+   }
+  ],
+  "outputs": [
+   {
+    "name": "profit",
+    "type": "uint256",
+    "internalType": "uint256"
+   }
+  ],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "morpho",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address",
+    "internalType": "contract IMorpho"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "owner",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "paused",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool",
+    "internalType": "bool"
+   }
+  ],
+  "stateMutability": "view"
+ },
+ {
+  "type": "function",
+  "name": "rescue",
+  "inputs": [
+   {
+    "name": "token",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "to",
+    "type": "address",
+    "internalType": "address"
+   },
+   {
+    "name": "amount",
+    "type": "uint256",
+    "internalType": "uint256"
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "setOwner",
+  "inputs": [
+   {
+    "name": "newOwner",
+    "type": "address",
+    "internalType": "address"
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "function",
+  "name": "setPaused",
+  "inputs": [
+   {
+    "name": "p",
+    "type": "bool",
+    "internalType": "bool"
+   }
+  ],
+  "outputs": [],
+  "stateMutability": "nonpayable"
+ },
+ {
+  "type": "event",
+  "name": "Executed",
+  "inputs": [
+   {
+    "name": "quote",
+    "type": "address",
+    "indexed": True,
+    "internalType": "address"
+   },
+   {
+    "name": "amount",
+    "type": "uint256",
+    "indexed": False,
+    "internalType": "uint256"
+   },
+   {
+    "name": "repay",
+    "type": "uint256",
+    "indexed": False,
+    "internalType": "uint256"
+   },
+   {
+    "name": "profit",
+    "type": "uint256",
+    "indexed": False,
+    "internalType": "uint256"
+   },
+   {
+    "name": "lender",
+    "type": "uint8",
+    "indexed": False,
+    "internalType": "enum FlashArb.Lender"
+   }
+  ],
+  "anonymous": False
+ },
+ {
+  "type": "event",
+  "name": "OwnerChanged",
+  "inputs": [
+   {
+    "name": "previousOwner",
+    "type": "address",
+    "indexed": True,
+    "internalType": "address"
+   },
+   {
+    "name": "newOwner",
+    "type": "address",
+    "indexed": True,
+    "internalType": "address"
+   }
+  ],
+  "anonymous": False
+ },
+ {
+  "type": "event",
+  "name": "PausedSet",
+  "inputs": [
+   {
+    "name": "paused",
+    "type": "bool",
+    "indexed": False,
+    "internalType": "bool"
+   }
+  ],
+  "anonymous": False
+ },
+ {
+  "type": "error",
+  "name": "BadCallback",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "Expired",
+  "inputs": [
+   {
+    "name": "deadline",
+    "type": "uint256",
+    "internalType": "uint256"
+   },
+   {
+    "name": "current",
+    "type": "uint256",
+    "internalType": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "error",
+  "name": "InsufficientProfit",
+  "inputs": [
+   {
+    "name": "got",
+    "type": "uint256",
+    "internalType": "uint256"
+   },
+   {
+    "name": "want",
+    "type": "uint256",
+    "internalType": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "error",
+  "name": "IsPaused",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "LenderUnavailable",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "NotOwner",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "TransferFailed",
+  "inputs": []
+ },
+ {
+  "type": "error",
+  "name": "ZeroAddress",
+  "inputs": []
+ }
+]
