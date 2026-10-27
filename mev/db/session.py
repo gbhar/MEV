@@ -43,14 +43,14 @@ def init_db() -> None:
 
 
 def load_active_pools(min_tvl_usd: float | None = None) -> list[Pool]:
-    """The pool set the loop watches: active rows (bootstrap rows have no TVL yet and are always included;
-    discovered rows need tvl >= min_tvl_usd). Falls back to the bootstrap list if the table is empty."""
+    """The pool set the loop watches: active rows with tvl >= min_tvl_usd (rows discovery has not valued yet, i.e.
+    tvl NULL, are included). Falls back to the bootstrap list if the table is empty."""
     from mev.pools.registry import Token
     with session() as db:
         rows = db.query(PoolRow).filter(PoolRow.active.is_(True)).all()
     pools = []
     for r in rows:
-        if r.source == "discovery" and min_tvl_usd is not None and (r.tvl_usd or 0) < min_tvl_usd:
+        if min_tvl_usd is not None and r.tvl_usd is not None and r.tvl_usd < min_tvl_usd:
             continue
         pools.append(Pool(r.pool_id, r.dex, r.kind, r.address, Token(r.token0_address, r.token0_symbol, r.token0_decimals),
                           Token(r.token1_address, r.token1_symbol, r.token1_decimals), r.fee_ppm, r.tick_spacing, r.variant or "uniswap"))

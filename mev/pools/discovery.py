@@ -310,8 +310,7 @@ def upsert(pools: list[dict], prices: dict[str, Decimal]) -> tuple[int, int]:
                 by_addr[f.address.lower()] = row
                 added += 1
             row.fee_ppm, row.tick_spacing, row.pair, row.tvl_usd, row.updated_at = d["fee_ppm"], d.get("tick_spacing"), pool.pair, tvl, now
-            if row.source != "bootstrap":
-                row.active = tvl is not None and tvl >= settings.min_pool_tvl_usd
+            row.active = tvl is not None and tvl >= settings.min_pool_tvl_usd   # bootstrap rows too (2026-10-28: thin bootstrap pools were the losing routes)
             active += bool(row.active)
         db.commit()
     return added, active

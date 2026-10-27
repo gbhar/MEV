@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     # Storage / metrics
     database_url: str = "sqlite:///mev.db"
     metrics_port: int = 9100
+    retention_hours: int = 24           # mev.db.retention: raw per-block state (snapshots, swaps, blocks) older than this is deleted
+    retention_decision_hours: int = 168 # ... losing opportunities/simulations/features older than this (7 days); net-positive ones are kept
 
     # Economics of a flash-loan arbitrage on Base
     trade_sizes_usd: list[int] = [500, 1_000, 2_500, 5_000, 10_000, 20_000, 50_000]

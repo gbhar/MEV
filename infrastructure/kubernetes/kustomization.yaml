@@ -10,3 +10,4 @@ resources:
   - grafana-dashboard.yaml
   - ingress.yaml
   - discovery-cronjob.yaml
+  - retention-cronjob.yaml

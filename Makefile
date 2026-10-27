@@ -35,6 +35,9 @@ live-tests:
 discover:          # refresh the pools table (allowlisted tokens x factories); add ARGS=--all for everything
 	$(PY) -m mev.pools.discovery $(ARGS)
 
+retain:            # drop raw state older than MEV_RETENTION_HOURS (24) and losing decisions older than MEV_RETENTION_DECISION_HOURS (168); ARGS=--vacuum shrinks the SQLite file
+	$(PY) -m mev.db.retention $(ARGS)
+
 # Laptop agent: alerts, on-chain verification and lifetime tracking for stored opportunities
 agent:
 	$(PY) -m mev.agent
